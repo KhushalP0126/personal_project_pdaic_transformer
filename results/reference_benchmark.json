@@ -1,0 +1,108 @@
+{
+  "environment": {
+    "cuda_available": false,
+    "cuda_device": null,
+    "platform": "macOS-26.2-arm64-arm-64bit",
+    "python": "3.11.9",
+    "torch": "2.11.0"
+  },
+  "generated_utc": "2026-05-04T17:27:13Z",
+  "runs": [
+    {
+      "backend": {
+        "device": "cpu",
+        "distance_pairs_per_second": 16817145.05919039,
+        "distance_seconds": 0.011892625014297664,
+        "name": "torch"
+      },
+      "classes": 16,
+      "cluster_depth": 4,
+      "conversion": {
+        "int64_pack_seconds": 0.0004628748865798116,
+        "int64_unpack_seconds": 0.00036708300467580557,
+        "skipped": false
+      },
+      "dataset_seconds": 0.0007544170366600156,
+      "nearest_center_accuracy": 0.8818359375,
+      "p": 3,
+      "r": 8,
+      "samples": 4096,
+      "tokens_per_class": 256,
+      "ultrametric_triplets": 20000,
+      "ultrametric_violation_rate": 0.0,
+      "ultrametric_violations": 0
+    },
+    {
+      "backend": {
+        "device": "cpu",
+        "distance_pairs_per_second": 7516218.567420233,
+        "distance_seconds": 0.026609125081449747,
+        "name": "torch"
+      },
+      "classes": 16,
+      "cluster_depth": 8,
+      "conversion": {
+        "int64_pack_seconds": 0.000594792072661221,
+        "int64_unpack_seconds": 0.0006288749864324927,
+        "skipped": false
+      },
+      "dataset_seconds": 0.0004469999112188816,
+      "nearest_center_accuracy": 1.0,
+      "p": 3,
+      "r": 16,
+      "samples": 4096,
+      "tokens_per_class": 256,
+      "ultrametric_triplets": 20000,
+      "ultrametric_violation_rate": 0.0,
+      "ultrametric_violations": 0
+    },
+    {
+      "backend": {
+        "device": "cpu",
+        "distance_pairs_per_second": 36098639.43023894,
+        "distance_seconds": 0.005540375015698373,
+        "name": "torch"
+      },
+      "classes": 16,
+      "cluster_depth": 4,
+      "conversion": {
+        "int64_pack_seconds": 0.00029216601978987455,
+        "int64_unpack_seconds": 0.0002773749874904752,
+        "skipped": false
+      },
+      "dataset_seconds": 0.00033083290327340364,
+      "nearest_center_accuracy": 1.0,
+      "p": 5,
+      "r": 8,
+      "samples": 4096,
+      "tokens_per_class": 256,
+      "ultrametric_triplets": 20000,
+      "ultrametric_violation_rate": 0.0,
+      "ultrametric_violations": 0
+    },
+    {
+      "backend": {
+        "device": "cpu",
+        "distance_pairs_per_second": 22458031.409403972,
+        "distance_seconds": 0.008905500057153404,
+        "name": "torch"
+      },
+      "classes": 16,
+      "cluster_depth": 8,
+      "conversion": {
+        "int64_pack_seconds": 0.00047270802315324545,
+        "int64_unpack_seconds": 0.000528208096511662,
+        "skipped": false
+      },
+      "dataset_seconds": 0.0004898749757558107,
+      "nearest_center_accuracy": 1.0,
+      "p": 5,
+      "r": 16,
+      "samples": 4096,
+      "tokens_per_class": 256,
+      "ultrametric_triplets": 20000,
+      "ultrametric_violation_rate": 0.0,
+      "ultrametric_violations": 0
+    }
+  ]
+}

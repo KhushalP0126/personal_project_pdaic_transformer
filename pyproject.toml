@@ -1,0 +1,19 @@
+[project]
+name = "personal-project-pdaic-transformer"
+version = "0.1.0"
+description = "p-adic transformer synthetic dataset and benchmark harness"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
