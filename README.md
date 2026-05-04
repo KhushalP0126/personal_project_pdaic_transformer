@@ -11,26 +11,20 @@ Phase 1 creates a reproducible PyTorch p-adic benchmark harness for the Privacy 
 ## Quick Start
 
 ```bash
-python3 -m pip install -e .
-python3 scripts/run_padic_benchmark.py \
-  --p-list 3 5 \
-  --r-list 8 16 \
-  --samples 4096 \
-  --classes 16 \
-  --tokens-per-class 256
+make
 ```
 
 For a cloud GPU sweep:
 
 ```bash
-python3 -m pip install -e .
-python3 scripts/run_padic_benchmark.py \
-  --device cuda \
-  --p-list 3 5 \
-  --r-list 8 16 24 32 \
-  --samples 16384 \
-  --classes 32 \
-  --tokens-per-class 128
+make gpu
+```
+
+The benchmark arguments are configurable:
+
+```bash
+make cpu CPU_ARGS="--device cpu --p-list 3 5 --r-list 16 --samples 8192"
+make gpu GPU_ARGS="--device cuda --p-list 3 5 --r-list 8 16 24 32 --samples 32768"
 ```
 
 ## Validation
@@ -38,7 +32,7 @@ python3 scripts/run_padic_benchmark.py \
 Run the standard-library tests:
 
 ```bash
-python3 -m unittest discover -s tests
+make test
 ```
 
 The local reference output is stored in [`results/reference_benchmark.md`](results/reference_benchmark.md).
