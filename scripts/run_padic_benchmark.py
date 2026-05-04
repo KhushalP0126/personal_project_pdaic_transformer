@@ -12,18 +12,15 @@ from pathlib import Path
 
 import torch
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC_ROOT = REPO_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
-
-from padic_transformer.config import BenchmarkConfig  # noqa: E402
-from padic_transformer.hensel import digits_to_int64, int64_to_digits  # noqa: E402
-from padic_transformer.ultrametric import (  # noqa: E402
+from padic_transformer.config import BenchmarkConfig
+from padic_transformer.hensel import digits_to_int64, int64_to_digits
+from padic_transformer.ultrametric import (
     generate_clustered_hensel_dataset,
     nearest_center_accuracy,
     ultrametric_violation_rate,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def parse_args() -> argparse.Namespace:
@@ -110,6 +107,7 @@ def benchmark_one(config: BenchmarkConfig, device: torch.device) -> dict[str, ob
         dataset.token_digits,
         dataset.token_labels,
         dataset.center_digits,
+        dataset.center_labels,
     )
 
     generator = torch.Generator(device=device)

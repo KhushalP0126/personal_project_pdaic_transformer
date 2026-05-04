@@ -62,7 +62,7 @@ def carry_left_add(left: torch.Tensor, right: torch.Tensor, p: int) -> tuple[tor
     retained digit. Broadcasting follows PyTorch rules except for the final digit axis.
     """
     a = _require_digit_tensor(left, p)
-    b = _require_digit_tensor(right, p).to(device=a.device)
+    b = _require_digit_tensor(right, p).to(device=a.device, dtype=torch.int64)
     if a.shape[-1] != b.shape[-1]:
         raise ValueError("left and right must have the same precision axis")
 

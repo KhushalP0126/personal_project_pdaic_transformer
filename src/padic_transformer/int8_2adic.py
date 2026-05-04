@@ -42,6 +42,14 @@ def v2_saturated(value: int, r: int = 8) -> int:
     return valuation
 
 
+def v2_saturated_array(values: np.ndarray, r: int = 8) -> np.ndarray:
+    """Vectorized saturated 2-adic valuation for bounded unsigned residues."""
+    limit = modulus(r)
+    residues = np.asarray(values, dtype=np.int64) % limit
+    lookup = np.fromiter((v2_saturated(value, r) for value in range(limit)), dtype=np.int16)
+    return lookup[residues]
+
+
 def two_adic_distance_exponent(left: int, right: int, r: int = 8) -> int:
     """Return the saturated exponent k in distance 2**(-k)."""
     return v2_saturated(left - right, r)
@@ -111,8 +119,8 @@ def verify_numpy_int8(r: int = 8) -> Int8Verification:
     signed_wide_low_byte = (signed_wide & 0xFF).astype(np.uint8)
     unsigned_wide = left.astype(np.int32) * right.astype(np.int32)
 
-    valuation_expected = np.vectorize(v2_saturated, otypes=[np.int16])(theoretical.astype(np.int16), 8)
-    valuation_tile = np.vectorize(v2_saturated, otypes=[np.int16])(unsigned_tile.astype(np.int16), 8)
+    valuation_expected = v2_saturated_array(theoretical, 8)
+    valuation_tile = v2_saturated_array(unsigned_tile, 8)
 
     return Int8Verification(
         precision=8,
@@ -143,17 +151,17 @@ def matmul2x2_mod256(left: list[list[int]], right: list[list[int]]) -> list[list
 
 
 DEFAULT_SYSCALL_MAP = {
-    "read": 0x00,
-    "write": 0x04,
-    "open": 0x08,
-    "close": 0x0C,
-    "mmap": 0x01,
-    "brk": 0x05,
-    "fork": 0x09,
-    "execve": 0x0D,
-    "socket": 0x02,
-    "connect": 0x06,
-    "recvfrom": 0x0A,
+    "read": 0b0000_0000,
+    "write": 0b0000_0100,
+    "open": 0b0000_1000,
+    "close": 0b0000_1100,
+    "mmap": 0b0000_0001,
+    "brk": 0b0000_0101,
+    "fork": 0b0000_1001,
+    "execve": 0b0000_1101,
+    "socket": 0b0000_0010,
+    "connect": 0b0000_0110,
+    "recvfrom": 0b0000_1010,
 }
 
 

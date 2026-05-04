@@ -6,6 +6,7 @@ from padic_transformer.int8_2adic import (
     hensel_mul_truncated,
     matmul2x2_mod256,
     two_adic_distance_exponent,
+    v2_saturated_array,
     v2_saturated,
     verify_numpy_int8,
     wrap_uint,
@@ -18,6 +19,7 @@ class Int82AdicTests(unittest.TestCase):
         self.assertEqual(v2_saturated(0, 8), 8)
         self.assertEqual(v2_saturated(128, 8), 7)
         self.assertEqual(v2_saturated(3, 8), 0)
+        self.assertEqual(v2_saturated_array([0, 1, 2, 4, 128], 8).tolist(), [8, 0, 1, 2, 7])
 
     def test_distance_exponent_uses_low_bits(self) -> None:
         self.assertEqual(two_adic_distance_exponent(0x00, 0x04, 8), 2)

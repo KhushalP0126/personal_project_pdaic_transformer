@@ -9,6 +9,7 @@ from padic_transformer.hensel import carry_left_add, digits_to_int64, int64_to_d
 from padic_transformer.ultrametric import (
     generate_clustered_hensel_dataset,
     nearest_center_accuracy,
+    sample_distinct_triplet_indices,
     ultrametric_violation_rate,
 )
 
@@ -18,6 +19,12 @@ class PadicCoreTests(unittest.TestCase):
         self.assertTrue(is_prime(3))
         self.assertTrue(is_prime(5))
         self.assertFalse(is_prime(9))
+
+    def test_config_validates_at_construction(self) -> None:
+        with self.assertRaises(ValueError):
+            BenchmarkConfig(p=4, r=8)
+        with self.assertRaises(ValueError):
+            BenchmarkConfig(p=3, r=0)
 
     def test_hensel_round_trip(self) -> None:
         values = torch.tensor([0, 1, 7, 42, 255], dtype=torch.int64)
@@ -50,6 +57,12 @@ class PadicCoreTests(unittest.TestCase):
         self.assertEqual(count, 0)
         self.assertEqual(rate, 0.0)
 
+    def test_triplet_sampler_excludes_degenerate_rows(self) -> None:
+        triplets = sample_distinct_triplet_indices(5, 1000, seed=123, device="cpu")
+        self.assertTrue(torch.all(triplets[:, 0] != triplets[:, 1]).item())
+        self.assertTrue(torch.all(triplets[:, 0] != triplets[:, 2]).item())
+        self.assertTrue(torch.all(triplets[:, 1] != triplets[:, 2]).item())
+
     def test_nearest_center_accuracy_has_signal(self) -> None:
         config = BenchmarkConfig(
             p=5,
@@ -63,6 +76,24 @@ class PadicCoreTests(unittest.TestCase):
             dataset.token_digits,
             dataset.token_labels,
             dataset.center_digits,
+        )
+        self.assertGreaterEqual(accuracy, 0.95)
+
+    def test_nearest_center_accuracy_accepts_permuted_centers(self) -> None:
+        config = BenchmarkConfig(
+            p=5,
+            r=8,
+            samples=512,
+            classes=8,
+            tokens_per_class=64,
+        )
+        dataset = generate_clustered_hensel_dataset(config)
+        order = torch.tensor([2, 0, 1, 3, 4, 5, 6, 7], dtype=torch.int64)
+        accuracy = nearest_center_accuracy(
+            dataset.token_digits,
+            dataset.token_labels,
+            dataset.center_digits[order],
+            dataset.center_labels[order],
         )
         self.assertGreaterEqual(accuracy, 0.95)
 

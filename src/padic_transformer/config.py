@@ -38,6 +38,9 @@ class BenchmarkConfig:
     triplets: int = 20000
     distance_pairs: int = 200000
 
+    def __post_init__(self) -> None:
+        self.validate()
+
     def validate(self) -> None:
         if not is_prime(self.p):
             raise ValueError(f"p must be prime, got {self.p}")
@@ -57,4 +60,3 @@ class BenchmarkConfig:
             raise ValueError(
                 f"distance_pairs must be in [1, 10000000], got {self.distance_pairs}"
             )
-
