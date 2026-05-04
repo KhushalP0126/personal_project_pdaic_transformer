@@ -89,6 +89,22 @@ def generate_clustered_hensel_dataset(
     )
 
 
+def map_raw_indices_excluding_pair(
+    raw: torch.Tensor,
+    lower: torch.Tensor,
+    upper: torch.Tensor,
+) -> torch.Tensor:
+    """Map raw indices into a range with two sorted excluded positions removed."""
+    raw_values = torch.as_tensor(raw, dtype=torch.int64)
+    lower_values = torch.as_tensor(lower, dtype=torch.int64, device=raw_values.device)
+    upper_values = torch.as_tensor(upper, dtype=torch.int64, device=raw_values.device)
+    if bool(torch.any(lower_values >= upper_values).item()):
+        raise ValueError("lower must be strictly less than upper")
+
+    shifted = raw_values + (raw_values >= lower_values).to(torch.int64)
+    return shifted + (shifted >= upper_values).to(torch.int64)
+
+
 def sample_distinct_triplet_indices(
     population: int,
     triplets: int,
@@ -134,7 +150,7 @@ def sample_distinct_triplet_indices(
         device=resolved_device,
         generator=generator,
     )
-    z = z_raw + (z_raw >= lower).to(torch.int64) + (z_raw >= (upper - 1)).to(torch.int64)
+    z = map_raw_indices_excluding_pair(z_raw, lower, upper)
     return torch.stack([x, y, z], dim=1)
 
 

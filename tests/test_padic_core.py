@@ -8,6 +8,7 @@ from padic_transformer.config import BenchmarkConfig, is_prime
 from padic_transformer.hensel import carry_left_add, digits_to_int64, int64_to_digits
 from padic_transformer.ultrametric import (
     generate_clustered_hensel_dataset,
+    map_raw_indices_excluding_pair,
     nearest_center_accuracy,
     sample_distinct_triplet_indices,
     ultrametric_violation_rate,
@@ -62,6 +63,25 @@ class PadicCoreTests(unittest.TestCase):
         self.assertTrue(torch.all(triplets[:, 0] != triplets[:, 1]).item())
         self.assertTrue(torch.all(triplets[:, 0] != triplets[:, 2]).item())
         self.assertTrue(torch.all(triplets[:, 1] != triplets[:, 2]).item())
+
+    def test_excluding_pair_mapping_is_exact_bijection(self) -> None:
+        for population in range(3, 9):
+            raw = torch.arange(population - 2, dtype=torch.int64)
+            for first in range(population):
+                for second in range(population):
+                    if first == second:
+                        continue
+                    lower, upper = sorted((first, second))
+                    mapped = map_raw_indices_excluding_pair(
+                        raw,
+                        torch.full_like(raw, lower),
+                        torch.full_like(raw, upper),
+                    )
+                    expected = torch.tensor(
+                        [idx for idx in range(population) if idx not in {first, second}],
+                        dtype=torch.int64,
+                    )
+                    torch.testing.assert_close(mapped, expected, rtol=0, atol=0)
 
     def test_nearest_center_accuracy_has_signal(self) -> None:
         config = BenchmarkConfig(
