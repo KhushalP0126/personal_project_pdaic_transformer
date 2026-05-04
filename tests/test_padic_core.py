@@ -83,6 +83,14 @@ class PadicCoreTests(unittest.TestCase):
                     )
                     torch.testing.assert_close(mapped, expected, rtol=0, atol=0)
 
+    def test_excluding_pair_mapping_supports_mixed_batch(self) -> None:
+        raw = torch.tensor([0, 1, 2, 3], dtype=torch.int64)
+        lower = torch.tensor([1, 0, 2, 1], dtype=torch.int64)
+        upper = torch.tensor([3, 2, 5, 4], dtype=torch.int64)
+        mapped = map_raw_indices_excluding_pair(raw, lower, upper)
+        expected = torch.tensor([0, 3, 3, 5], dtype=torch.int64)
+        torch.testing.assert_close(mapped, expected, rtol=0, atol=0)
+
     def test_nearest_center_accuracy_has_signal(self) -> None:
         config = BenchmarkConfig(
             p=5,

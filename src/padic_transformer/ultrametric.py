@@ -140,6 +140,7 @@ def sample_distinct_triplet_indices(
     )
     y = y_raw + (y_raw >= x).to(torch.int64)
 
+    # y is sampled by skipping x, so lower < upper is guaranteed here.
     lower = torch.minimum(x, y)
     upper = torch.maximum(x, y)
     z_raw = torch.randint(
