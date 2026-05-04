@@ -17,7 +17,7 @@ python3 scripts/run_padic_benchmark.py \
   --r-list 8 16 \
   --samples 4096 \
   --classes 16 \
-  --tokens-per-class 64
+  --tokens-per-class 256
 ```
 
 For a cloud GPU sweep:
