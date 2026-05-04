@@ -20,6 +20,12 @@ For a cloud GPU sweep:
 make gpu
 ```
 
+For the INT8 2-adic hardware dry-lab:
+
+```bash
+make int8
+```
+
 The benchmark arguments are configurable:
 
 ```bash

@@ -1,0 +1,89 @@
+{
+  "generated_utc": "2026-05-04T19:02:29Z",
+  "matmul2x2_mod256": [
+    [
+      41,
+      51
+    ],
+    [
+      124,
+      247
+    ]
+  ],
+  "matmul_left": [
+    [
+      3,
+      5
+    ],
+    [
+      128,
+      255
+    ]
+  ],
+  "matmul_right": [
+    [
+      7,
+      2
+    ],
+    [
+      4,
+      9
+    ]
+  ],
+  "minus_one_uint8": 255,
+  "syscall_distances": [
+    [
+      "read",
+      "write",
+      2
+    ],
+    [
+      "read",
+      "open",
+      3
+    ],
+    [
+      "mmap",
+      "brk",
+      2
+    ],
+    [
+      "socket",
+      "connect",
+      2
+    ],
+    [
+      "read",
+      "socket",
+      1
+    ],
+    [
+      "mmap",
+      "socket",
+      0
+    ]
+  ],
+  "syscall_map": {
+    "brk": 5,
+    "close": 12,
+    "connect": 6,
+    "execve": 13,
+    "fork": 9,
+    "mmap": 1,
+    "open": 8,
+    "read": 0,
+    "recvfrom": 10,
+    "socket": 2,
+    "write": 4
+  },
+  "verification": {
+    "hensel_mul_mismatches": 0,
+    "pair_count": 65536,
+    "precision": 8,
+    "signed_integer_semantic_mismatches": 48895,
+    "signed_low_byte_mismatches": 0,
+    "signed_wide_low_byte_mismatches": 0,
+    "unsigned_mismatches": 0,
+    "valuation_mismatches": 0
+  }
+}
