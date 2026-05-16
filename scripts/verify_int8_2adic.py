@@ -5,22 +5,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC_ROOT = REPO_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
-
-from padic_transformer.int8_2adic import (  # noqa: E402
+from padic_transformer.int8_2adic import (
     DEFAULT_SYSCALL_MAP,
     matmul2x2_mod256,
     syscall_distance_rows,
     verify_numpy_int8,
     wrap_uint,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def parse_args() -> argparse.Namespace:

@@ -6,23 +6,23 @@
     "python": "3.11.9",
     "torch": "2.11.0"
   },
-  "generated_utc": "2026-05-04T17:58:05Z",
+  "generated_utc": "2026-05-04T18:11:22Z",
   "runs": [
     {
       "backend": {
         "device": "cpu",
-        "distance_pairs_per_second": 17474689.03131965,
-        "distance_seconds": 0.011445124982856214,
+        "distance_pairs_per_second": 23458003.033123773,
+        "distance_seconds": 0.008525874931365252,
         "name": "torch"
       },
       "classes": 16,
       "cluster_depth": 4,
       "conversion": {
-        "int64_pack_seconds": 0.0004427500534802675,
-        "int64_unpack_seconds": 0.0003761670086532831,
+        "int64_pack_seconds": 0.012698124977760017,
+        "int64_unpack_seconds": 0.0029048749711364508,
         "skipped": false
       },
-      "dataset_seconds": 0.0007324579637497663,
+      "dataset_seconds": 0.020873375004157424,
       "nearest_center_accuracy": 0.8818359375,
       "p": 3,
       "r": 8,
@@ -35,18 +35,18 @@
     {
       "backend": {
         "device": "cpu",
-        "distance_pairs_per_second": 7192142.58049803,
-        "distance_seconds": 0.027808125014416873,
+        "distance_pairs_per_second": 8121909.861128844,
+        "distance_seconds": 0.024624750018119812,
         "name": "torch"
       },
       "classes": 16,
       "cluster_depth": 8,
       "conversion": {
-        "int64_pack_seconds": 0.0006023750174790621,
-        "int64_unpack_seconds": 0.0006155420560389757,
+        "int64_pack_seconds": 0.0006086669163778424,
+        "int64_unpack_seconds": 0.0006316670915111899,
         "skipped": false
       },
-      "dataset_seconds": 0.0004694580566138029,
+      "dataset_seconds": 0.00046020804438740015,
       "nearest_center_accuracy": 1.0,
       "p": 3,
       "r": 16,
@@ -59,18 +59,18 @@
     {
       "backend": {
         "device": "cpu",
-        "distance_pairs_per_second": 34330832.49365699,
-        "distance_seconds": 0.005825667059980333,
+        "distance_pairs_per_second": 28053768.058791347,
+        "distance_seconds": 0.007129167090170085,
         "name": "torch"
       },
       "classes": 16,
       "cluster_depth": 4,
       "conversion": {
-        "int64_pack_seconds": 0.0002768340054899454,
-        "int64_unpack_seconds": 0.0002751669380813837,
+        "int64_pack_seconds": 0.00029087497387081385,
+        "int64_unpack_seconds": 0.0003053750842809677,
         "skipped": false
       },
-      "dataset_seconds": 0.0003005840117111802,
+      "dataset_seconds": 0.00035454193130135536,
       "nearest_center_accuracy": 1.0,
       "p": 5,
       "r": 8,
@@ -83,18 +83,18 @@
     {
       "backend": {
         "device": "cpu",
-        "distance_pairs_per_second": 23125507.13997393,
-        "distance_seconds": 0.008648458984680474,
+        "distance_pairs_per_second": 22572089.745367676,
+        "distance_seconds": 0.008860499947331846,
         "name": "torch"
       },
       "classes": 16,
       "cluster_depth": 8,
       "conversion": {
-        "int64_pack_seconds": 0.0004699589917436242,
-        "int64_unpack_seconds": 0.00047904206439852715,
+        "int64_pack_seconds": 0.0004830000689253211,
+        "int64_unpack_seconds": 0.0005204590270295739,
         "skipped": false
       },
-      "dataset_seconds": 0.0004411659901961684,
+      "dataset_seconds": 0.0004657499957829714,
       "nearest_center_accuracy": 1.0,
       "p": 5,
       "r": 16,
