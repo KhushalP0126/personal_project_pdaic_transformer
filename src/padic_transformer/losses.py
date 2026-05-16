@@ -36,6 +36,8 @@ class PadicContrastiveLoss(nn.Module):
         pairs_j = pairs_j[mask_upper]
 
         n_pairs = pairs_i.shape[0]
+        if n_pairs == 0:
+            return digits.new_tensor(0.0, dtype=torch.float32)
         if n_pairs > self.max_pairs:
             perm = torch.randperm(n_pairs, device=digits.device)[: self.max_pairs]
             pairs_i = pairs_i[perm]

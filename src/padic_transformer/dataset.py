@@ -55,10 +55,16 @@ class SyscallAnomalyDataset(Dataset):
         n_attack = int(n_samples * anomaly_cfg.attack_fraction)
         n_normal = n_samples - n_attack
 
-        normal_starts = torch.randint(0, max(1, n_tokens - window), (n_normal,), generator=rng)
+        if n_normal < 1 or n_attack < 1:
+            raise ValueError(
+                "n_samples must produce at least one normal and one attack sample; "
+                "increase n_samples or adjust attack_fraction"
+            )
+
+        normal_starts = torch.randint(0, n_tokens - window + 1, (n_normal,), generator=rng)
         normal_windows = torch.stack([self._get_window(start, window) for start in normal_starts])
 
-        attack_starts = torch.randint(0, max(1, n_tokens - window), (n_attack,), generator=rng)
+        attack_starts = torch.randint(0, n_tokens - window + 1, (n_attack,), generator=rng)
         attack_windows = torch.stack([self._inject_attack(start, window, rng) for start in attack_starts])
 
         all_windows = torch.cat([normal_windows, attack_windows], dim=0)
@@ -85,7 +91,8 @@ class SyscallAnomalyDataset(Dataset):
         attack_len = int(torch.randint(self.cfg.attack_min_len, eff_max + 1, (1,), generator=rng).item())
         inject_pos = int(torch.randint(0, window - attack_len + 1, (1,), generator=rng).item())
 
-        window_labels = self.hensel_data.token_labels[torch.arange(start, start + attack_len) % n_tokens]
+        region = torch.arange(start + inject_pos, start + inject_pos + attack_len) % n_tokens
+        window_labels = self.hensel_data.token_labels[region]
         majority_label = int(window_labels.mode().values.item())
         n_classes = int(self.hensel_data.token_labels.max().item()) + 1
         other_class = (majority_label + 1) % n_classes

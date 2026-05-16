@@ -147,7 +147,8 @@ def _train_epoch(
         else:
             loss.backward()
 
-        if (step + 1) % grad_accum == 0:
+        is_last = step + 1 == len(loader)
+        if (step + 1) % grad_accum == 0 or is_last:
             if scaler is not None:
                 scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
