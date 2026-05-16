@@ -22,6 +22,58 @@ def _amp_dtype(device: torch.device) -> torch.dtype:
     return torch.bfloat16 if major >= 8 else torch.float16
 
 
+def _search_threshold_metrics(
+    all_logits: torch.Tensor,
+    all_labels: torch.Tensor,
+    num_thresholds: int = 200,
+) -> dict[str, float]:
+    probs = torch.sigmoid(all_logits)
+    labs = all_labels.long()
+
+    thresholds = torch.linspace(probs.min().item(), probs.max().item(), steps=num_thresholds)
+    best = {
+        "threshold": 0.0,
+        "f1": -1.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "fpr": 0.0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "tn": 0,
+    }
+
+    neg_total = max(1, int((labs == 0).sum()))
+    pos_total = max(1, int((labs == 1).sum()))
+
+    for threshold in thresholds:
+        preds = (all_logits >= threshold).long()
+        tp = int(((preds == 1) & (labs == 1)).sum())
+        fp = int(((preds == 1) & (labs == 0)).sum())
+        fn = int(((preds == 0) & (labs == 1)).sum())
+        tn = int(((preds == 0) & (labs == 0)).sum())
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        f1 = 2 * precision * recall / max(1e-9, precision + recall)
+        fpr = fp / neg_total
+        if f1 > best["f1"]:
+            best = {
+                "threshold": float(threshold.item()),
+                "f1": f1,
+                "precision": precision,
+                "recall": recall,
+                "fpr": fpr,
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
+                "tn": tn,
+            }
+
+    best["neg_total"] = neg_total
+    best["pos_total"] = pos_total
+    return best
+
+
 def _compute_metrics(all_logits: torch.Tensor, all_labels: torch.Tensor, threshold: float = 0.0) -> dict[str, float]:
     probs = torch.sigmoid(all_logits)
     preds = (all_logits >= threshold).long()
@@ -199,6 +251,13 @@ def _val_epoch(
     logits_cat = torch.cat(all_logits)
     labels_cat = torch.cat(all_labels)
     metrics = _compute_metrics(logits_cat, labels_cat)
+    threshold_metrics = _search_threshold_metrics(logits_cat, labels_cat)
+    metrics["threshold_search"] = threshold_metrics
+    metrics["best_f1"] = threshold_metrics["f1"]
+    metrics["best_precision"] = threshold_metrics["precision"]
+    metrics["best_recall"] = threshold_metrics["recall"]
+    metrics["best_fpr"] = threshold_metrics["fpr"]
+    metrics["best_threshold"] = threshold_metrics["threshold"]
     metrics["loss"] = total_loss / max(1, n_batches)
     metrics["bce"] = total_bce / max(1, n_batches)
     metrics["contrastive"] = total_ctr / max(1, n_batches)
@@ -354,7 +413,7 @@ def train(config: TrainConfig, device: torch.device) -> dict[str, object]:
             f"train_loss={train_metrics['loss']:.4f} | "
             f"val_loss={val_metrics['loss']:.4f}  "
             f"acc={val_metrics['accuracy']:.4f}  "
-            f"f1={val_metrics['f1']:.4f}  "
+            f"best_f1={val_metrics['best_f1']:.4f}  "
             f"auroc={val_metrics['auroc']:.4f}  "
             f"[{elapsed:.1f}s]"
         )
@@ -374,6 +433,10 @@ def train(config: TrainConfig, device: torch.device) -> dict[str, object]:
     result = {
         "best_epoch": best_epoch,
         "best_auroc": best_auroc,
+        "best_f1": max(item["val"]["best_f1"] for item in history),
+        "best_precision": max(item["val"]["best_precision"] for item in history),
+        "best_recall": max(item["val"]["best_recall"] for item in history),
+        "best_fpr": min(item["val"]["best_fpr"] for item in history),
         "total_seconds": total_time,
         "history": history,
     }
@@ -397,16 +460,21 @@ def _write_training_log(path: Path, config: TrainConfig, result: dict, device: t
             f"- **p**: `{config.p}`  **r**: `{config.r}`  **d_model**: `{config.d_model}`",
             f"- **Epochs**: `{config.epochs}`  **Batch**: `{config.batch_size}`",
             f"- **Best AUROC**: `{result['best_auroc']:.4f}` at epoch `{result['best_epoch']}`",
+            f"- **Best F1**: `{result['best_f1']:.4f}`",
+            f"- **Best Precision**: `{result['best_precision']:.4f}`",
+            f"- **Best Recall**: `{result['best_recall']:.4f}`",
+            f"- **Best FPR**: `{result['best_fpr']:.4f}`",
             f"- **Total time**: `{result['total_seconds']:.1f}s`",
             "",
-            "| Epoch | LR | Train Loss | Val Loss | Accuracy | F1 | AUROC |",
-            "|---:|---:|---:|---:|---:|---:|---:|",
+            "| Epoch | LR | Train Loss | Val Loss | Accuracy | Best F1 | Precision | Recall | FPR | AUROC |",
+            "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     rows = [
         f"| {r['epoch']} | {r['lr']:.2e} | {r['train']['loss']:.4f} | "
         f"{r['val']['loss']:.4f} | {r['val']['accuracy']:.4f} | "
-        f"{r['val']['f1']:.4f} | {r['val']['auroc']:.4f} |"
+        f"{r['val']['best_f1']:.4f} | {r['val']['best_precision']:.4f} | "
+        f"{r['val']['best_recall']:.4f} | {r['val']['best_fpr']:.4f} | {r['val']['auroc']:.4f} |"
         for r in history
     ]
     path.write_text(header + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
