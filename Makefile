@@ -12,7 +12,7 @@ TRAIN_CPU_ARGS ?= --device cpu --p 3 --r 8 --d-model 64 --n-heads 4 --n-layers 2
 
 .DEFAULT_GOAL := all
 
-.PHONY: all setup test run benchmark cpu gpu int8 hardware train train-cpu train-gpu clean help
+.PHONY: all setup test run benchmark cpu gpu int8 hardware train train-cpu train-gpu ablate ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7 clean help
 
 all: setup test run
 
@@ -51,6 +51,26 @@ train-gpu: setup
 train-cpu: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_CPU_ARGS)
 
+ablate-no-contrastive: setup
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_GPU_ARGS) --alpha 0.0 --log-json results/ablate_no_contrastive.json --log-md results/ablate_no_contrastive.md
+
+ablate-small-model: setup
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py --device cuda --p 7 --r 16 --d-model 128 --n-heads 4 --n-layers 2 --ffn-dim 512 --head-hidden 64 --epochs 10 --n-train 131072 --n-val 16384 --batch-size 768 --num-workers 4 --log-json results/ablate_small_model.json --log-md results/ablate_small_model.md
+
+ablate-r8: setup
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py --device cuda --p 7 --r 8 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --epochs 10 --n-train 131072 --n-val 16384 --batch-size 768 --num-workers 4 --log-json results/ablate_r8.json --log-md results/ablate_r8.md
+
+ablate-p3: setup
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py --device cuda --p 3 --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --epochs 10 --n-train 131072 --n-val 16384 --batch-size 768 --num-workers 4 --log-json results/ablate_p3.json --log-md results/ablate_p3.md
+
+ablate-p5: setup
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py --device cuda --p 5 --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --epochs 10 --n-train 131072 --n-val 16384 --batch-size 768 --num-workers 4 --log-json results/ablate_p5.json --log-md results/ablate_p5.md
+
+ablate-p7: setup
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py --device cuda --p 7 --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --epochs 10 --n-train 131072 --n-val 16384 --batch-size 768 --num-workers 4 --log-json results/ablate_p7.json --log-md results/ablate_p7.md
+
+ablate: ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7
+
 clean:
 	rm -rf .pytest_cache .ruff_cache
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -65,4 +85,5 @@ help:
 	@echo "  make int8   Verify unsigned INT8 against 2-adic arithmetic"
 	@echo "  make train  Run the GPU training pipeline"
 	@echo "  make train-cpu  Run the CPU training smoke test"
+	@echo "  make ablate  Run the full ablation suite"
 	@echo "  make clean  Remove local Python caches"
