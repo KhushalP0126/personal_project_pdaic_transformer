@@ -44,41 +44,74 @@ def generate_clustered_hensel_dataset(
         device=resolved_device,
         generator=generator,
     )
-    class_counts = [config.tokens_per_class for _ in range(config.classes)]
-    base_token_count = config.classes * config.tokens_per_class
-    if config.samples > base_token_count:
-        extra = config.samples - base_token_count
-        for class_id in range(config.classes):
-            class_counts[class_id] += extra // config.classes
-        for class_id in range(extra % config.classes):
-            class_counts[class_id] += 1
-
-    token_count = sum(class_counts)
-    digits = torch.randint(
+    class_token_bank = torch.randint(
         0,
         config.p,
-        (token_count, config.r),
+        (config.classes, config.tokens_per_class, config.r),
         dtype=torch.int64,
         device=resolved_device,
         generator=generator,
     )
-    labels = torch.repeat_interleave(
-        torch.arange(config.classes, dtype=torch.int64, device=resolved_device),
-        torch.tensor(class_counts, dtype=torch.int64, device=resolved_device),
+    for class_id in range(config.classes):
+        class_token_bank[class_id, :, :cluster_depth] = centers[class_id, :cluster_depth]
+
+    labels = torch.empty(config.samples, dtype=torch.int64, device=resolved_device)
+    max_dwell = max(2, min(cluster_depth + 1, 8))
+    current_label = int(
+        torch.randint(
+            0,
+            config.classes,
+            (1,),
+            dtype=torch.int64,
+            device=resolved_device,
+            generator=generator,
+        ).item()
     )
 
-    start = 0
-    for class_id in range(config.classes):
-        stop = start + class_counts[class_id]
-        digits[start:stop, :cluster_depth] = centers[class_id, :cluster_depth]
-        start = stop
+    cursor = 0
+    while cursor < config.samples:
+        dwell = int(
+            torch.randint(
+                1,
+                max_dwell + 1,
+                (1,),
+                dtype=torch.int64,
+                device=resolved_device,
+                generator=generator,
+            ).item()
+        )
+        stop = min(config.samples, cursor + dwell)
+        labels[cursor:stop] = current_label
+        cursor = stop
+        if cursor >= config.samples:
+            break
+        raw_next = int(
+            torch.randint(
+                0,
+                config.classes - 1,
+                (1,),
+                dtype=torch.int64,
+                device=resolved_device,
+                generator=generator,
+            ).item()
+        )
+        current_label = raw_next + (1 if raw_next >= current_label else 0)
 
-    if config.samples < token_count:
-        selected = torch.randperm(token_count, device=resolved_device, generator=generator)[
-            : config.samples
-        ]
-        digits = digits[selected]
-        labels = labels[selected]
+    digits = torch.empty((config.samples, config.r), dtype=torch.int64, device=resolved_device)
+    for class_id in range(config.classes):
+        mask = labels == class_id
+        count = int(mask.sum().item())
+        if count == 0:
+            continue
+        token_ids = torch.randint(
+            0,
+            config.tokens_per_class,
+            (count,),
+            dtype=torch.int64,
+            device=resolved_device,
+            generator=generator,
+        )
+        digits[mask] = class_token_bank[class_id, token_ids]
 
     return HenselDataset(
         token_digits=digits,

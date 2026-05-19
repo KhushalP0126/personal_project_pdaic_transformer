@@ -25,11 +25,15 @@ class PadicContrastiveLoss(nn.Module):
         self.margin_neg = margin_neg
         self.max_pairs = max_pairs
 
-    def forward(self, digits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        batch = digits.shape[0]
-        rep = digits[:, 0, :]
+    def forward(self, representations: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        if representations.ndim != 2:
+            raise ValueError(
+                f"representations must have shape [batch, dim], got {tuple(representations.shape)}"
+            )
+        batch = representations.shape[0]
+        rep = F.normalize(representations, dim=-1)
 
-        idx = torch.arange(batch, device=digits.device)
+        idx = torch.arange(batch, device=representations.device)
         pairs_i, pairs_j = torch.meshgrid(idx, idx, indexing="ij")
         mask_upper = pairs_i < pairs_j
         pairs_i = pairs_i[mask_upper]
@@ -37,17 +41,15 @@ class PadicContrastiveLoss(nn.Module):
 
         n_pairs = pairs_i.shape[0]
         if n_pairs == 0:
-            return digits.new_tensor(0.0, dtype=torch.float32)
+            return representations.new_tensor(0.0, dtype=torch.float32)
         if n_pairs > self.max_pairs:
-            perm = torch.randperm(n_pairs, device=digits.device)[: self.max_pairs]
+            perm = torch.randperm(n_pairs, device=representations.device)[: self.max_pairs]
             pairs_i = pairs_i[perm]
             pairs_j = pairs_j[perm]
 
         a = rep[pairs_i]
         b = rep[pairs_j]
-        equal = (a == b).to(torch.int64)
-        valuation = equal.cumprod(dim=-1).sum(dim=-1).float()
-        distance = 1.0 / (1.0 + valuation)
+        distance = 1.0 - (a * b).sum(dim=-1)
 
         same = (labels[pairs_i] == labels[pairs_j]).float()
         diff = 1.0 - same
@@ -82,12 +84,12 @@ class AnomalyLoss(nn.Module):
         self,
         logits: torch.Tensor,
         labels: torch.Tensor,
-        digits: torch.Tensor,
+        representations: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.bce.pos_weight is not None and self.bce.pos_weight.device != logits.device:
             self.bce.pos_weight = self.bce.pos_weight.to(logits.device)
 
         bce_loss = self.bce(logits, labels)
-        contrastive_loss = self.contrastive(digits, labels)
+        contrastive_loss = self.contrastive(representations, labels)
         total = bce_loss + self.alpha * contrastive_loss
         return total, bce_loss, contrastive_loss

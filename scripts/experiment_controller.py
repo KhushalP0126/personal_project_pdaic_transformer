@@ -162,8 +162,18 @@ def padic_distance_loss(
     # Convert valuation to distance proxy: larger val = smaller distance
     # Use a simple hinge: push target-close pairs to have val >= margin
     margin = digits.shape[1] * 0.5
-    loss_close = F.relu(margin - val[target_closer]).mean()
-    loss_far   = F.relu(val[~target_closer] - (margin * 0.25)).mean()
+    close_vals = val[target_closer]
+    far_vals = val[~target_closer]
+    loss_close = (
+        F.relu(margin - close_vals).mean()
+        if close_vals.numel() > 0
+        else val.new_tensor(0.0)
+    )
+    loss_far = (
+        F.relu(far_vals - (margin * 0.25)).mean()
+        if far_vals.numel() > 0
+        else val.new_tensor(0.0)
+    )
     return loss_close + loss_far
 
 

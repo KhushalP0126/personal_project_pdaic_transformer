@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import unittest
+import sys
+from pathlib import Path
 
 import torch
+
+SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from padic_transformer.config import BenchmarkConfig, is_prime
 from padic_transformer.hensel import carry_left_add, digits_to_int64, int64_to_digits

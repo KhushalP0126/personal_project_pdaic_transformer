@@ -7,6 +7,7 @@ import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import torch
 import torch.nn as nn
@@ -27,10 +28,9 @@ def _search_threshold_metrics(
     all_labels: torch.Tensor,
     num_thresholds: int = 200,
 ) -> dict[str, float]:
-    probs = torch.sigmoid(all_logits)
     labs = all_labels.long()
 
-    thresholds = torch.linspace(probs.min().item(), probs.max().item(), steps=num_thresholds)
+    thresholds = torch.linspace(all_logits.min().item(), all_logits.max().item(), steps=num_thresholds)
     best = {
         "threshold": 0.0,
         "f1": -1.0,
@@ -180,6 +180,8 @@ def _train_epoch(
     grad_accum: int,
     scaler: torch.cuda.amp.GradScaler | None,
 ) -> dict[str, float]:
+    if grad_accum < 1:
+        raise ValueError("grad_accum must be >= 1")
     model.train()
     total_loss = total_bce = total_ctr = 0.0
     n_batches = 0
@@ -190,8 +192,8 @@ def _train_epoch(
         labels = labels.to(device, non_blocking=True)
 
         with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=(amp_dtype != torch.float32)):
-            logits = model(digits)
-            loss, bce_loss, ctr_loss = loss_fn(logits, labels, digits)
+            logits, representations = model.forward_with_features(digits)
+            loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
             loss = loss / grad_accum
 
         if scaler is not None:
@@ -239,8 +241,8 @@ def _val_epoch(
     for digits, labels in loader:
         digits = digits.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        logits = model(digits)
-        loss, bce_loss, ctr_loss = loss_fn(logits, labels, digits)
+        logits, representations = model.forward_with_features(digits)
+        loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
         total_loss += float(loss.item())
         total_bce += float(bce_loss.item())
         total_ctr += float(ctr_loss.item())
@@ -294,7 +296,11 @@ def _safe_results_path(raw: str) -> Path:
     return path
 
 
-def train(config: TrainConfig, device: torch.device) -> dict[str, object]:
+def train(
+    config: TrainConfig,
+    device: torch.device,
+    model_factory: Callable[[TrainConfig], nn.Module] | None = None,
+) -> dict[str, object]:
     from .config import BenchmarkConfig
     from .dataset import AnomalyDatasetConfig, build_dataloaders
     from .losses import AnomalyLoss
@@ -334,16 +340,20 @@ def train(config: TrainConfig, device: torch.device) -> dict[str, object]:
         num_workers=config.num_workers,
     )
 
-    model = PadicAnomalyDetector(
-        p=config.p,
-        r=config.r,
-        d_model=config.d_model,
-        n_heads=config.n_heads,
-        n_layers=config.n_layers,
-        ffn_dim=config.ffn_dim,
-        head_hidden=config.head_hidden,
-        dropout=config.dropout,
-    ).to(device)
+    if model_factory is None:
+        model = PadicAnomalyDetector(
+            p=config.p,
+            r=config.r,
+            d_model=config.d_model,
+            n_heads=config.n_heads,
+            n_layers=config.n_layers,
+            ffn_dim=config.ffn_dim,
+            head_hidden=config.head_hidden,
+            dropout=config.dropout,
+        )
+    else:
+        model = model_factory(config)
+    model = model.to(device)
     print(model.parameter_summary())
 
     loss_fn = AnomalyLoss(
@@ -355,12 +365,21 @@ def train(config: TrainConfig, device: torch.device) -> dict[str, object]:
         max_pairs=config.max_pairs,
     ).to(device)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.learning_rate,
-        weight_decay=config.weight_decay,
-        fused=(device.type == "cuda"),
-    )
+    optimizer_kwargs = {
+        "lr": config.learning_rate,
+        "weight_decay": config.weight_decay,
+    }
+    if device.type == "cuda":
+        try:
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                fused=True,
+                **optimizer_kwargs,
+            )
+        except (TypeError, RuntimeError):
+            optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
     scheduler = _build_scheduler(optimizer, config)
 
     amp_dtype = _amp_dtype(device)

@@ -52,6 +52,10 @@ class SyscallAnomalyDataset(Dataset):
 
         n_tokens = hensel_data.token_digits.shape[0]
         window = anomaly_cfg.window_size
+        if n_tokens < window:
+            raise ValueError(
+                f"window_size ({window}) cannot exceed token stream length ({n_tokens})"
+            )
         n_attack = int(n_samples * anomaly_cfg.attack_fraction)
         n_normal = n_samples - n_attack
 
@@ -79,9 +83,10 @@ class SyscallAnomalyDataset(Dataset):
         self.labels = all_labels[perm]
 
     def _get_window(self, start: int, window: int) -> torch.Tensor:
-        n = self.hensel_data.token_digits.shape[0]
-        idx = torch.arange(start, start + window) % n
-        return self.hensel_data.token_digits[idx].clone()
+        stop = start + window
+        if start < 0 or stop > self.hensel_data.token_digits.shape[0]:
+            raise ValueError("window exceeds token stream bounds")
+        return self.hensel_data.token_digits[start:stop].clone()
 
     def _inject_attack(self, start: int, window: int, rng: torch.Generator) -> torch.Tensor:
         base = self._get_window(start, window).clone()
@@ -91,19 +96,15 @@ class SyscallAnomalyDataset(Dataset):
         attack_len = int(torch.randint(self.cfg.attack_min_len, eff_max + 1, (1,), generator=rng).item())
         inject_pos = int(torch.randint(0, window - attack_len + 1, (1,), generator=rng).item())
 
-        region = torch.arange(start + inject_pos, start + inject_pos + attack_len) % n_tokens
+        region = torch.arange(start + inject_pos, start + inject_pos + attack_len)
         window_labels = self.hensel_data.token_labels[region]
         majority_label = int(window_labels.mode().values.item())
-        n_classes = int(self.hensel_data.token_labels.max().item()) + 1
-        other_class = (majority_label + 1) % n_classes
-        candidate_mask = self.hensel_data.token_labels == other_class
-        candidate_idx = candidate_mask.nonzero(as_tuple=True)[0]
-        if candidate_idx.numel() == 0:
-            candidate_idx = (self.hensel_data.token_labels != majority_label).nonzero(as_tuple=True)[0]
+        candidate_idx = (self.hensel_data.token_labels != majority_label).nonzero(as_tuple=True)[0]
         if candidate_idx.numel() == 0:
             return base
 
-        chosen = candidate_idx[torch.randint(0, candidate_idx.numel(), (attack_len,), generator=rng)]
+        sample_ids = torch.randint(0, candidate_idx.numel(), (attack_len,), generator=rng)
+        chosen = candidate_idx[sample_ids]
         base[inject_pos : inject_pos + attack_len] = self.hensel_data.token_digits[chosen].clone()
         return base
 

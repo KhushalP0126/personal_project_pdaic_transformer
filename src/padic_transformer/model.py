@@ -94,16 +94,22 @@ class AnomalyHead(nn.Module):
             nn.Linear(hidden_dim, 1),
         )
 
-    def forward(
+    def pool_hidden(
         self,
         hidden: torch.Tensor,
         padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if padding_mask is not None:
             mask = (~padding_mask).unsqueeze(-1).to(hidden.dtype)
-            pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
-        else:
-            pooled = hidden.mean(dim=1)
+            return (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+        return hidden.mean(dim=1)
+
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        padding_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        pooled = self.pool_hidden(hidden, padding_mask=padding_mask)
         return self.net(pooled).squeeze(-1)
 
 
@@ -136,14 +142,31 @@ class PadicAnomalyDetector(nn.Module):
         )
         self.head = AnomalyHead(d_model=d_model, hidden_dim=head_hidden, dropout=dropout)
 
-    def forward(
+    def encode(
         self,
         digits: torch.Tensor,
         padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         x = self.embedding(digits)
-        h = self.encoder(x, src_key_padding_mask=padding_mask)
-        return self.head(h, padding_mask=padding_mask)
+        return self.encoder(x, src_key_padding_mask=padding_mask)
+
+    def forward_with_features(
+        self,
+        digits: torch.Tensor,
+        padding_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden = self.encode(digits, padding_mask=padding_mask)
+        pooled = self.head.pool_hidden(hidden, padding_mask=padding_mask)
+        logits = self.head.net(pooled).squeeze(-1)
+        return logits, pooled
+
+    def forward(
+        self,
+        digits: torch.Tensor,
+        padding_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        logits, _ = self.forward_with_features(digits, padding_mask=padding_mask)
+        return logits
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
