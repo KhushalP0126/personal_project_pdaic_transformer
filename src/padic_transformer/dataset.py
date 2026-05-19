@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -101,6 +102,13 @@ class SyscallAnomalyDataset(Dataset):
         majority_label = int(window_labels.mode().values.item())
         candidate_idx = (self.hensel_data.token_labels != majority_label).nonzero(as_tuple=True)[0]
         if candidate_idx.numel() == 0:
+            warnings.warn(
+                f"_inject_attack: no cross-class tokens found for majority_label={majority_label}. "
+                "Returning unmodified window — this sample will be mislabeled as an attack. "
+                "Consider increasing classes or tokens_per_class.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             return base
 
         sample_ids = torch.randint(0, candidate_idx.numel(), (attack_len,), generator=rng)
@@ -142,7 +150,7 @@ def build_dataloaders(
         attack_fraction=anomaly_cfg.attack_fraction,
         attack_min_len=anomaly_cfg.attack_min_len,
         attack_max_len=anomaly_cfg.attack_max_len,
-        seed=anomaly_cfg.seed + 1,
+        seed=anomaly_cfg.seed ^ 0xDEAD_BEEF,
     )
 
     train_ds = SyscallAnomalyDataset(train_hensel, anomaly_cfg, n_train)

@@ -169,15 +169,15 @@ class PadicAnomalyDetector(nn.Module):
         return logits
 
     def count_parameters(self) -> int:
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return sum(param.numel() for param in self.parameters() if param.requires_grad)
 
     def parameter_summary(self) -> str:
         total = self.count_parameters()
         lines = [
             f"PadicAnomalyDetector  p={self.p}  r={self.r}  d_model={self.d_model}",
-            f"  HenselEmbedding : {sum(p.numel() for p in self.embedding.parameters()):>10,}",
-            f"  TransformerEncoder: {sum(p.numel() for p in self.encoder.parameters()):>10,}",
-            f"  AnomalyHead     : {sum(p.numel() for p in self.head.parameters()):>10,}",
+            f"  HenselEmbedding : {sum(param.numel() for param in self.embedding.parameters()):>10,}",
+            f"  TransformerEncoder: {sum(param.numel() for param in self.encoder.parameters()):>10,}",
+            f"  AnomalyHead     : {sum(param.numel() for param in self.head.parameters()):>10,}",
             f"  -- Total        : {total:>10,}",
         ]
         return "\n".join(lines)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 import torch
 
@@ -112,6 +113,18 @@ def generate_clustered_hensel_dataset(
             generator=generator,
         )
         digits[mask] = class_token_bank[class_id, token_ids]
+
+    min_required = max(1, config.tokens_per_class // 8)
+    class_counts = torch.bincount(labels, minlength=config.classes)
+    sparse_classes = (class_counts < min_required).sum().item()
+    if sparse_classes > 0:
+        warnings.warn(
+            f"generate_clustered_hensel_dataset: {sparse_classes}/{config.classes} classes "
+            f"have fewer than {min_required} tokens (min count = {int(class_counts.min().item())}). "
+            "Increase `samples` or decrease `classes` for better class coverage.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     return HenselDataset(
         token_digits=digits,

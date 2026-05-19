@@ -23,8 +23,18 @@ def _require_digit_tensor(digits: torch.Tensor, p: int) -> torch.Tensor:
     return arr.to(dtype=torch.int64)
 
 
-def int64_to_digits(values: torch.Tensor, p: int, r: int) -> torch.Tensor:
-    """Convert non-negative int64 residues to fixed-width Hensel digits."""
+def int64_to_digits(
+    values: torch.Tensor,
+    p: int,
+    r: int,
+    validate: bool = False,
+) -> torch.Tensor:
+    """Convert non-negative int64 residues to fixed-width Hensel digits.
+
+    Args:
+        validate: if True, raise ValueError when any value >= p**r
+                  (i.e. when high-order digits would be silently discarded).
+    """
     if p < 2:
         raise ValueError("p must be >= 2")
     if not 1 <= r <= 64:
@@ -33,6 +43,14 @@ def int64_to_digits(values: torch.Tensor, p: int, r: int) -> torch.Tensor:
     work = torch.as_tensor(values, dtype=torch.int64).clone()
     if bool(torch.any(work < 0).item()):
         raise ValueError("values must be non-negative")
+    if validate:
+        modulus = p ** r
+        if bool(torch.any(work >= modulus).item()):
+            raise ValueError(
+                f"values contain entries >= p**r = {modulus}; "
+                "high-order digits will be silently truncated. "
+                "Pass validate=False to suppress this check."
+            )
     out = torch.empty((*work.shape, r), dtype=torch.int64, device=work.device)
     for idx in range(r):
         out[..., idx] = work.remainder(p)

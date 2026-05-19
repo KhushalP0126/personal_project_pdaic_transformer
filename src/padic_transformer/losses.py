@@ -71,8 +71,11 @@ class AnomalyLoss(nn.Module):
     ) -> None:
         super().__init__()
         self.alpha = alpha
-        pw = torch.tensor([pos_weight]) if pos_weight is not None else None
-        self.bce = nn.BCEWithLogitsLoss(pos_weight=pw)
+        self.bce = nn.BCEWithLogitsLoss()
+        if pos_weight is not None:
+            self.register_buffer("_pos_weight", torch.tensor([pos_weight]))
+        else:
+            self._pos_weight = None
         self.contrastive = PadicContrastiveLoss(
             p=p,
             margin_pos=margin_pos,
@@ -86,10 +89,12 @@ class AnomalyLoss(nn.Module):
         labels: torch.Tensor,
         representations: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if self.bce.pos_weight is not None and self.bce.pos_weight.device != logits.device:
-            self.bce.pos_weight = self.bce.pos_weight.to(logits.device)
-
-        bce_loss = self.bce(logits, labels)
+        if self._pos_weight is not None:
+            bce_loss = F.binary_cross_entropy_with_logits(
+                logits, labels, pos_weight=self._pos_weight
+            )
+        else:
+            bce_loss = self.bce(logits, labels)
         contrastive_loss = self.contrastive(representations, labels)
         total = bce_loss + self.alpha * contrastive_loss
         return total, bce_loss, contrastive_loss

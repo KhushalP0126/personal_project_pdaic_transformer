@@ -53,7 +53,7 @@ class SoftPadicValuation(nn.Module):
         ea = emb(digits_a)
         eb = emb(digits_b)
         sq_dist = ((ea - eb) ** 2).sum(dim=-1)
-        tau = self.log_temperature[position].exp()
+        tau = self.log_temperature[position].exp().clamp(min=0.01, max=50.0)
         return torch.exp(-tau * sq_dist)
 
     def forward(self, digits_a: torch.Tensor, digits_b: torch.Tensor) -> torch.Tensor:
@@ -103,9 +103,11 @@ class PadicAttentionHead(nn.Module):
             raise ValueError("digits and x must have matching batch/seq dimensions")
 
         batch, seq, _ = digits.shape
-        logits = digits.new_empty((batch, seq, seq), dtype=x.dtype)
-        for j in range(seq):
-            logits[:, :, j] = self.valuation(digits, digits[:, j : j + 1, :].expand(-1, seq, -1))
+        digits_a = digits.unsqueeze(2).expand(-1, -1, seq, -1)
+        digits_b = digits.unsqueeze(1).expand(-1, seq, -1, -1)
+        flat_a = digits_a.reshape(batch * seq, seq, self.valuation.r)
+        flat_b = digits_b.reshape(batch * seq, seq, self.valuation.r)
+        logits = self.valuation(flat_a, flat_b).reshape(batch, seq, seq).to(dtype=x.dtype)
 
         if key_padding_mask is not None:
             logits = logits.masked_fill(key_padding_mask.unsqueeze(1), torch.finfo(logits.dtype).min)
@@ -114,6 +116,8 @@ class PadicAttentionHead(nn.Module):
         values = self.value_proj(x)
         out = torch.bmm(weights, values)
         out = self.dropout(out)
+        if key_padding_mask is not None:
+            out = out * (~key_padding_mask).unsqueeze(-1).to(out.dtype)
         return out, weights
 
 
@@ -323,16 +327,16 @@ class PadicAttentionAnomalyDetector(nn.Module):
         return self.head(h, padding_mask=padding_mask), weights
 
     def count_parameters(self) -> int:
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return sum(param.numel() for param in self.parameters() if param.requires_grad)
 
     def parameter_summary(self) -> str:
         total = self.count_parameters()
         return "\n".join(
             [
                 f"PadicAttentionAnomalyDetector  p={self.p}  r={self.r}  d_model={self.d_model}",
-                f"  HenselEmbedding : {sum(p.numel() for p in self.embedding.parameters()):>10,}",
-                f"  AttentionEncoder: {sum(p.numel() for p in self.encoder.parameters()):>10,}",
-                f"  AnomalyHead     : {sum(p.numel() for p in self.head.parameters()):>10,}",
+                f"  HenselEmbedding : {sum(param.numel() for param in self.embedding.parameters()):>10,}",
+                f"  AttentionEncoder: {sum(param.numel() for param in self.encoder.parameters()):>10,}",
+                f"  AnomalyHead     : {sum(param.numel() for param in self.head.parameters()):>10,}",
                 f"  -- Total        : {total:>10,}",
             ]
         )

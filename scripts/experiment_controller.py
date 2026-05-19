@@ -705,8 +705,8 @@ class ExperimentController:
             all_scores = torch.cat(scores_list, dim=0)
             predictions = torch.argmax(all_scores, dim=1)
 
-        self.logger.update_f1(metrics, predictions, labels, anomaly_class=0)
-        print(f"        F1={metrics.f1:.4f}  P={metrics.precision:.4f}  R={metrics.recall:.4f}")
+        self.logger.update_f1(metrics, predictions, labels, anomaly_class=1)
+        print(f"        F1(anomaly)={metrics.f1:.4f}  P={metrics.precision:.4f}  R={metrics.recall:.4f}")
 
         return metrics
 
@@ -840,6 +840,13 @@ def gpu_smoke_test(device_str: str = "cpu") -> None:
     assert int(noisy.min().item()) >= 0
     assert int(noisy.max().item()) < P
     print(f"     PASS  noisy range=[{int(noisy.min().item())}, {int(noisy.max().item())}]")
+
+    print("  [6b] Bit-flip noise with p=3 preserves digit range [0,3)...")
+    digits_p3 = torch.randint(0, 3, (N, R), dtype=torch.int64, device=device)
+    noisy_p3 = ctrl._apply_bit_flip_noise(digits_p3, p=3, flip_prob=0.5)
+    assert int(noisy_p3.min().item()) >= 0
+    assert int(noisy_p3.max().item()) < 3, f"Expected max < 3, got {noisy_p3.max()}"
+    print(f"     PASS  noisy_p3 range=[{int(noisy_p3.min().item())}, {int(noisy_p3.max().item())}]")
 
     # --- Test 7: MetricLogger F1 ---
     print("  [7] MetricLogger F1 computation...")
