@@ -103,10 +103,18 @@ class PadicAttentionHead(nn.Module):
             raise ValueError("digits and x must have matching batch/seq dimensions")
 
         batch, seq, _ = digits.shape
-        digits_a = digits.unsqueeze(2).expand(-1, -1, seq, -1)
-        digits_b = digits.unsqueeze(1).expand(-1, seq, -1, -1)
-        flat_a = digits_a.reshape(batch * seq, seq, self.valuation.r)
-        flat_b = digits_b.reshape(batch * seq, seq, self.valuation.r)
+        flat_a = (
+            digits.unsqueeze(2)
+            .expand(-1, -1, seq, -1)
+            .contiguous()
+            .reshape(batch * seq, seq, self.valuation.r)
+        )
+        flat_b = (
+            digits.unsqueeze(1)
+            .expand(-1, seq, -1, -1)
+            .contiguous()
+            .reshape(batch * seq, seq, self.valuation.r)
+        )
         logits = self.valuation(flat_a, flat_b).reshape(batch, seq, seq).to(dtype=x.dtype)
 
         if key_padding_mask is not None:
