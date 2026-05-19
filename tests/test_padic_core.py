@@ -39,6 +39,10 @@ class PadicCoreTests(unittest.TestCase):
         restored = digits_to_int64(digits, p=3)
         torch.testing.assert_close(restored, values, rtol=0, atol=0)
 
+    def test_int64_to_digits_validate_rejects_truncation(self) -> None:
+        with self.assertRaises(ValueError):
+            int64_to_digits(torch.tensor([9], dtype=torch.int64), p=3, r=2, validate=True)
+
     def test_carry_left_add(self) -> None:
         left = torch.tensor([[2, 2, 0]], dtype=torch.int64)
         right = torch.tensor([[1, 0, 2]], dtype=torch.int64)

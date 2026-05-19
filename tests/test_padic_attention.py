@@ -39,6 +39,15 @@ class TestPadicAttentionHead(unittest.TestCase):
         self.assertEqual(out.shape, (2, 5, 16))
         self.assertEqual(weights.shape, (2, 5, 5))
 
+    def test_padded_queries_zero_output(self) -> None:
+        head = PadicAttentionHead(p=3, r=8, d_model=32, d_head=16, d_digit=8)
+        digits = torch.randint(0, 3, (2, 5, 8))
+        x = torch.randn(2, 5, 32)
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[:, -1] = True
+        out, _ = head(digits, x, key_padding_mask=mask)
+        torch.testing.assert_close(out[:, -1], torch.zeros_like(out[:, -1]), atol=1e-6, rtol=0.0)
+
 
 class TestPadicMultiHeadAttention(unittest.TestCase):
     def test_output_shape(self) -> None:

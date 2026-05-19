@@ -178,7 +178,7 @@ def _train_epoch(
     amp_dtype: torch.dtype,
     max_grad_norm: float,
     grad_accum: int,
-    scaler: torch.cuda.amp.GradScaler | None,
+    scaler: torch.amp.GradScaler | None,
 ) -> dict[str, float]:
     if grad_accum < 1:
         raise ValueError("grad_accum must be >= 1")
@@ -231,6 +231,7 @@ def _val_epoch(
     loader: DataLoader,
     loss_fn: nn.Module,
     device: torch.device,
+    amp_dtype: torch.dtype = torch.float32,
 ) -> dict[str, float]:
     model.eval()
     total_loss = total_bce = total_ctr = 0.0
@@ -241,8 +242,13 @@ def _val_epoch(
     for digits, labels in loader:
         digits = digits.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        logits, representations = model.forward_with_features(digits)
-        loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
+        with torch.amp.autocast(
+            device_type=device.type,
+            dtype=amp_dtype,
+            enabled=(amp_dtype != torch.float32),
+        ):
+            logits, representations = model.forward_with_features(digits)
+            loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
         total_loss += float(loss.item())
         total_bce += float(bce_loss.item())
         total_ctr += float(ctr_loss.item())
@@ -384,16 +390,16 @@ def train(
 
     amp_dtype = _amp_dtype(device)
     print(f"\nAMP dtype: {amp_dtype}")
-    scaler: torch.cuda.amp.GradScaler | None = None
+    scaler: torch.amp.GradScaler | None = None
     if device.type == "cuda" and amp_dtype == torch.float16:
-        scaler = torch.cuda.amp.GradScaler()
+        scaler = torch.amp.GradScaler("cuda")
 
     ckpt_dir = _safe_results_path(config.checkpoint_dir)
     log_json_path = _safe_results_path(config.log_json)
     log_md_path = _safe_results_path(config.log_md)
 
     history: list[dict] = []
-    best_auroc = 0.0
+    best_auroc = -1.0
     best_epoch = 0
     run_start = time.perf_counter()
 
@@ -411,7 +417,7 @@ def train(
             config.gradient_accumulation_steps,
             scaler,
         )
-        val_metrics = _val_epoch(model, val_loader, loss_fn, device)
+        val_metrics = _val_epoch(model, val_loader, loss_fn, device, amp_dtype)
         scheduler.step()
 
         elapsed = time.perf_counter() - t0
@@ -432,7 +438,7 @@ def train(
             f"train_loss={train_metrics['loss']:.4f} | "
             f"val_loss={val_metrics['loss']:.4f}  "
             f"acc={val_metrics['accuracy']:.4f}  "
-            f"best_f1={val_metrics['best_f1']:.4f}  "
+            f"best_f1(anomaly)={val_metrics['best_f1']:.4f}  "
             f"auroc={val_metrics['auroc']:.4f}  "
             f"[{elapsed:.1f}s]"
         )
@@ -449,13 +455,14 @@ def train(
     _save_checkpoint(ckpt_dir / "final.pt", model, optimizer, config.epochs, history[-1]["val"], config)
 
     total_time = time.perf_counter() - run_start
+    best_record = next(r for r in history if r["epoch"] == best_epoch)
     result = {
         "best_epoch": best_epoch,
         "best_auroc": best_auroc,
-        "best_f1": max(item["val"]["best_f1"] for item in history),
-        "best_precision": max(item["val"]["best_precision"] for item in history),
-        "best_recall": max(item["val"]["best_recall"] for item in history),
-        "best_fpr": min(item["val"]["best_fpr"] for item in history),
+        "best_f1": best_record["val"]["best_f1"],
+        "best_precision": best_record["val"]["best_precision"],
+        "best_recall": best_record["val"]["best_recall"],
+        "best_fpr": best_record["val"]["best_fpr"],
         "total_seconds": total_time,
         "history": history,
     }
@@ -479,13 +486,13 @@ def _write_training_log(path: Path, config: TrainConfig, result: dict, device: t
             f"- **p**: `{config.p}`  **r**: `{config.r}`  **d_model**: `{config.d_model}`",
             f"- **Epochs**: `{config.epochs}`  **Batch**: `{config.batch_size}`",
             f"- **Best AUROC**: `{result['best_auroc']:.4f}` at epoch `{result['best_epoch']}`",
-            f"- **Best F1**: `{result['best_f1']:.4f}`",
+            f"- **Best F1 (anomaly)**: `{result['best_f1']:.4f}`",
             f"- **Best Precision**: `{result['best_precision']:.4f}`",
             f"- **Best Recall**: `{result['best_recall']:.4f}`",
             f"- **Best FPR**: `{result['best_fpr']:.4f}`",
             f"- **Total time**: `{result['total_seconds']:.1f}s`",
             "",
-            "| Epoch | LR | Train Loss | Val Loss | Accuracy | Best F1 | Precision | Recall | FPR | AUROC |",
+            "| Epoch | LR | Train Loss | Val Loss | Accuracy | Best F1 (anomaly) | Precision | Recall | FPR | AUROC |",
             "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
