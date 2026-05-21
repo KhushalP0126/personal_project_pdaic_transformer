@@ -2,6 +2,7 @@
 
 from .config import BenchmarkConfig
 from .dataset import AnomalyDatasetConfig, SyscallAnomalyDataset, build_dataloaders
+from .dataset_realistic import RealisticBusDataset, RealisticDatasetConfig, make_weighted_loss
 from .hensel import (
     carry_left_add,
     digits_to_int64,
@@ -11,6 +12,13 @@ from .hensel import (
 )
 from .losses import AnomalyLoss, PadicContrastiveLoss
 from .model import AnomalyHead, HenselEmbedding, PadicAnomalyDetector, PadicTransformerEncoder
+from .model_fixes import (
+    HenselEmbeddingWithPosition,
+    StreamingWindowScorer,
+    compute_diversity_regularization,
+    log_temperature_health,
+    quantize_dynamic_model,
+)
 from .padic_attention import (
     AnomalyHead as PadicAttentionAnomalyHead,
     HenselEmbedding as PadicAttentionHenselEmbedding,
@@ -30,6 +38,9 @@ __all__ = [
     "AnomalyDatasetConfig",
     "AnomalyHead",
     "AnomalyLoss",
+    "RealisticBusDataset",
+    "RealisticDatasetConfig",
+    "compute_diversity_regularization",
     "PadicAttentionAnomalyDetector",
     "PadicAttentionEncoder",
     "PadicAttentionHead",
@@ -41,13 +52,18 @@ __all__ = [
     "formal_power_series_coefficients",
     "generate_clustered_hensel_dataset",
     "HenselEmbedding",
+    "HenselEmbeddingWithPosition",
     "int64_to_digits",
     "PadicAnomalyDetector",
     "PadicContrastiveLoss",
     "PadicTransformerEncoder",
     "PadicTransformerLayer",
+    "quantize_dynamic_model",
+    "StreamingWindowScorer",
     "SyscallAnomalyDataset",
     "TrainConfig",
+    "log_temperature_health",
+    "make_weighted_loss",
     "SoftPadicValuation",
     "build_dataloaders",
     "compare_hard_soft_valuation",

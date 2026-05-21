@@ -5,43 +5,21 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from .model_fixes import HenselEmbeddingWithPosition
 
-class HenselEmbedding(nn.Module):
-    """Embed a [batch, seq, r] digit tensor into [batch, seq, d_model]."""
 
-    def __init__(self, p: int, r: int, d_model: int) -> None:
-        super().__init__()
-        if p < 2:
-            raise ValueError("p must be >= 2")
-        if r < 1:
-            raise ValueError("r must be >= 1")
-        if d_model < 1:
-            raise ValueError("d_model must be >= 1")
-        self.p = p
-        self.r = r
-        self.d_model = d_model
-        self.digit_embeds = nn.ModuleList([nn.Embedding(p, d_model) for _ in range(r)])
-        self._reset_parameters()
+class HenselEmbedding(HenselEmbeddingWithPosition):
+    """Backward-compatible embedding with optional positional encoding."""
 
-    def _reset_parameters(self) -> None:
-        for embed in self.digit_embeds:
-            nn.init.normal_(embed.weight, mean=0.0, std=self.d_model ** -0.5)
-
-    def forward(self, digits: torch.Tensor) -> torch.Tensor:
-        if digits.ndim != 3 or digits.shape[-1] != self.r:
-            raise ValueError(
-                f"digits must be shape [batch, seq, {self.r}], got {tuple(digits.shape)}"
-            )
-        out = torch.zeros(
-            digits.shape[0],
-            digits.shape[1],
-            self.d_model,
-            dtype=torch.get_default_dtype(),
-            device=digits.device,
-        )
-        for idx, embed in enumerate(self.digit_embeds):
-            out = out + embed(digits[..., idx])
-        return out
+    def __init__(
+        self,
+        p: int,
+        r: int,
+        d_model: int,
+        max_seq_len: int = 0,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__(p=p, r=r, d_model=d_model, max_seq_len=max_seq_len, dropout=dropout)
 
 
 class PadicTransformerEncoder(nn.Module):
@@ -126,13 +104,14 @@ class PadicAnomalyDetector(nn.Module):
         ffn_dim: int = 1024,
         head_hidden: int = 128,
         dropout: float = 0.1,
+        max_seq_len: int = 256,
     ) -> None:
         super().__init__()
         self.p = p
         self.r = r
         self.d_model = d_model
 
-        self.embedding = HenselEmbedding(p=p, r=r, d_model=d_model)
+        self.embedding = HenselEmbedding(p=p, r=r, d_model=d_model, max_seq_len=max_seq_len, dropout=dropout)
         self.encoder = PadicTransformerEncoder(
             d_model=d_model,
             n_heads=n_heads,

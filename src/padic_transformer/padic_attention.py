@@ -8,6 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .model_fixes import HenselEmbeddingWithPosition
+
 
 def _attention_sparsity(weights: torch.Tensor, threshold: float = 1e-4) -> torch.Tensor:
     """Return the fraction of attention weights below `threshold`."""
@@ -25,6 +27,7 @@ class SoftPadicValuation(nn.Module):
         temperature: float = 4.0,
         learn_temp: bool = True,
         eps: float = 1e-6,
+        diversity_weight: float = 0.01,
     ) -> None:
         super().__init__()
         if p < 2:
@@ -40,10 +43,15 @@ class SoftPadicValuation(nn.Module):
         self.r = r
         self.d_digit = d_digit
         self.eps = eps
+        self.diversity_weight = diversity_weight
 
         self.digit_embeddings = nn.ModuleList([nn.Embedding(p, d_digit) for _ in range(r)])
         if learn_temp:
             self.log_temperature = nn.Parameter(torch.full((r,), math.log(temperature)))
+            with torch.no_grad():
+                decay = 0.15
+                for idx in range(r):
+                    self.log_temperature[idx] = math.log(temperature) - idx * decay
         else:
             self.register_buffer("log_temperature", torch.full((r,), math.log(temperature)))
         self.prefix_weights = nn.Parameter(torch.ones(r))
@@ -52,6 +60,26 @@ class SoftPadicValuation(nn.Module):
     def _reset_parameters(self) -> None:
         for emb in self.digit_embeddings:
             nn.init.normal_(emb.weight, mean=0.0, std=self.d_digit ** -0.5)
+
+    def temperature_stats(self) -> dict[str, float]:
+        temps = self.log_temperature.exp().detach()
+        return {
+            "temp_mean": float(temps.mean().item()),
+            "temp_std": float(temps.std().item()),
+            "temp_min": float(temps.min().item()),
+            "temp_max": float(temps.max().item()),
+            "temp_pos0": float(temps[0].item()),
+            "temp_pos_last": float(temps[-1].item()),
+            "collapsed": bool((temps.std() < 0.1 * temps.mean()).item()),
+        }
+
+    def temperature_diversity_loss(self) -> torch.Tensor:
+        temps = self.log_temperature.exp()
+        mean = temps.mean()
+        std = temps.std()
+        cv = std / (mean + self.eps)
+        target_cv = 0.3
+        return self.diversity_weight * F.relu(target_cv - cv)
 
     def _soft_match_at_position(self, digits_a: torch.Tensor, digits_b: torch.Tensor, position: int) -> torch.Tensor:
         emb = self.digit_embeddings[position]
@@ -298,23 +326,18 @@ class PadicAttentionEncoder(nn.Module):
 
 
 class HenselEmbedding(nn.Module):
-    def __init__(self, p: int, r: int, d_model: int) -> None:
+    def __init__(self, p: int, r: int, d_model: int, max_seq_len: int = 0, dropout: float = 0.1) -> None:
         super().__init__()
-        self.p = p
-        self.r = r
-        self.d_model = d_model
-        self.digit_embeds = nn.ModuleList([nn.Embedding(p, d_model) for _ in range(r)])
-        self._reset_parameters()
-
-    def _reset_parameters(self) -> None:
-        for embed in self.digit_embeds:
-            nn.init.normal_(embed.weight, mean=0.0, std=self.d_model ** -0.5)
+        self._impl = HenselEmbeddingWithPosition(
+            p=p,
+            r=r,
+            d_model=d_model,
+            max_seq_len=max_seq_len,
+            dropout=dropout,
+        )
 
     def forward(self, digits: torch.Tensor) -> torch.Tensor:
-        out = torch.zeros(digits.shape[0], digits.shape[1], self.d_model, dtype=torch.get_default_dtype(), device=digits.device)
-        for idx, embed in enumerate(self.digit_embeds):
-            out = out + embed(digits[..., idx])
-        return out
+        return self._impl(digits)
 
 
 class AnomalyHead(nn.Module):
@@ -351,12 +374,13 @@ class PadicAttentionAnomalyDetector(nn.Module):
         head_hidden: int = 128,
         d_digit: int = 16,
         dropout: float = 0.1,
+        max_seq_len: int = 256,
         ) -> None:
         super().__init__()
         self.p = p
         self.r = r
         self.d_model = d_model
-        self.embedding = HenselEmbedding(p=p, r=r, d_model=d_model)
+        self.embedding = HenselEmbedding(p=p, r=r, d_model=d_model, max_seq_len=max_seq_len, dropout=dropout)
         self.encoder = PadicAttentionEncoder(
             p=p,
             r=r,

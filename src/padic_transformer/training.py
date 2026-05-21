@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from .model_fixes import compute_diversity_regularization, log_temperature_health
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -128,12 +130,17 @@ class TrainConfig:
     attack_fraction: float = 0.3
     attack_min_len: int = 2
     attack_max_len: int = 8
+    realistic_dataset: bool = False
+    realistic_attack_fraction: float = 0.005
+    idle_fraction: float = 0.70
+    attack_kinds: tuple[str, ...] = ("cross_class", "stuck_at", "burst", "ordering")
     n_train: int = 65536
     n_val: int = 8192
     samples: int = 16384
     classes: int = 32
     tokens_per_class: int = 128
     seed: int = 20260504
+    max_seq_len: int = 256
 
     epochs: int = 20
     batch_size: int = 512
@@ -194,6 +201,7 @@ def _train_epoch(
         with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=(amp_dtype != torch.float32)):
             logits, representations = model.forward_with_features(digits)
             loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
+            loss = loss + compute_diversity_regularization(model)
             loss = loss / grad_accum
 
         if scaler is not None:
@@ -309,8 +317,11 @@ def train(
 ) -> dict[str, object]:
     from .config import BenchmarkConfig
     from .dataset import AnomalyDatasetConfig, build_dataloaders
+    from .dataset_realistic import RealisticBusDataset, RealisticDatasetConfig, make_weighted_loss
     from .losses import AnomalyLoss
     from .model import PadicAnomalyDetector
+    from .ultrametric import generate_clustered_hensel_dataset
+    from torch.utils.data import DataLoader
 
     print(f"\n{'='*60}")
     print("P-ADIC ANOMALY DETECTOR -- TRAINING")
@@ -334,17 +345,60 @@ def train(
         attack_max_len=config.attack_max_len,
         seed=config.seed,
     )
-
     print("Building dataloaders...")
-    train_loader, val_loader = build_dataloaders(
-        benchmark_cfg=benchmark_cfg,
-        anomaly_cfg=anomaly_cfg,
-        n_train=config.n_train,
-        n_val=config.n_val,
-        batch_size=config.batch_size,
-        device=device,
-        num_workers=config.num_workers,
-    )
+    if config.realistic_dataset:
+        train_hensel = generate_clustered_hensel_dataset(benchmark_cfg, device="cpu")
+        val_cfg = BenchmarkConfig(
+            p=config.p,
+            r=config.r,
+            samples=config.samples,
+            classes=config.classes,
+            tokens_per_class=config.tokens_per_class,
+            seed=config.seed + 999_999,
+            triplets=benchmark_cfg.triplets,
+            distance_pairs=benchmark_cfg.distance_pairs,
+        )
+        val_hensel = generate_clustered_hensel_dataset(val_cfg, device="cpu")
+        realistic_cfg = RealisticDatasetConfig(
+            window_size=config.window_size,
+            attack_fraction=config.realistic_attack_fraction,
+            idle_fraction=config.idle_fraction,
+            attack_min_len=config.attack_min_len,
+            attack_max_len=config.attack_max_len,
+            attack_kinds=config.attack_kinds,
+            seed=config.seed,
+        )
+        train_ds = RealisticBusDataset(train_hensel, realistic_cfg, n_samples=config.n_train)
+        val_ds = RealisticBusDataset(val_hensel, realistic_cfg, n_samples=config.n_val)
+        pin = device.type == "cuda"
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=config.num_workers,
+            pin_memory=pin,
+            persistent_workers=(config.num_workers > 0),
+            drop_last=True,
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=config.batch_size * 2,
+            shuffle=False,
+            num_workers=config.num_workers,
+            pin_memory=pin,
+            persistent_workers=(config.num_workers > 0),
+            drop_last=False,
+        )
+    else:
+        train_loader, val_loader = build_dataloaders(
+            benchmark_cfg=benchmark_cfg,
+            anomaly_cfg=anomaly_cfg,
+            n_train=config.n_train,
+            n_val=config.n_val,
+            batch_size=config.batch_size,
+            device=device,
+            num_workers=config.num_workers,
+        )
 
     if model_factory is None:
         model = PadicAnomalyDetector(
@@ -356,20 +410,31 @@ def train(
             ffn_dim=config.ffn_dim,
             head_hidden=config.head_hidden,
             dropout=config.dropout,
+            max_seq_len=config.max_seq_len,
         )
     else:
         model = model_factory(config)
     model = model.to(device)
     print(model.parameter_summary())
 
-    loss_fn = AnomalyLoss(
-        p=config.p,
-        alpha=config.alpha,
-        pos_weight=config.pos_weight,
-        margin_pos=config.margin_pos,
-        margin_neg=config.margin_neg,
-        max_pairs=config.max_pairs,
-    ).to(device)
+    if config.realistic_dataset:
+        loss_fn = make_weighted_loss(
+            train_ds,
+            p=config.p,
+            alpha=config.alpha,
+            margin_pos=config.margin_pos,
+            margin_neg=config.margin_neg,
+            max_pairs=config.max_pairs,
+        ).to(device)
+    else:
+        loss_fn = AnomalyLoss(
+            p=config.p,
+            alpha=config.alpha,
+            pos_weight=config.pos_weight,
+            margin_pos=config.margin_pos,
+            margin_neg=config.margin_neg,
+            max_pairs=config.max_pairs,
+        ).to(device)
 
     optimizer_kwargs = {
         "lr": config.learning_rate,
@@ -419,6 +484,7 @@ def train(
         )
         val_metrics = _val_epoch(model, val_loader, loss_fn, device, amp_dtype)
         scheduler.step()
+        log_temperature_health(model, epoch)
 
         elapsed = time.perf_counter() - t0
         lr_now = scheduler.get_last_lr()[0]

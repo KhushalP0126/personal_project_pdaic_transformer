@@ -18,6 +18,9 @@ TRAIN_CPU_ARGS ?= --device cpu --p 3 --r 8 --d-model 64 --n-heads 4 --n-layers 2
 TRAIN_ATTENTION_CPU_ARGS ?= --attention --device cpu --p 3 --r 8 --d-model 64 --n-heads 4 --n-layers 2 --ffn-dim 256 --head-hidden 32 --dropout 0.1 --d-digit 8 --window-size 16 --attack-fraction 0.3 --attack-min-len 2 --attack-max-len 4 --n-train 1024 --n-val 256 --samples 4096 --classes 16 --tokens-per-class 64 --epochs 3 --batch-size 64 --lr 3e-4 --num-workers 0 --save-every 999
 TRAIN_ATTENTION_GPU_ARGS ?= --attention --device cuda --p 3 --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --dropout 0.1 --d-digit 16 --window-size 48 --attack-fraction 0.35 --attack-min-len 2 --attack-max-len 10 --n-train 131072 --n-val 16384 --samples 32768 --classes 32 --tokens-per-class 256 --epochs 30 --batch-size 768 --grad-accum 2 --lr 2e-4 --weight-decay 1e-2 --warmup-epochs 3 --num-workers 4 --alpha 0.5 --pos-weight 1.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
 COMPARE_TRAIN_BASE_ARGS ?= --device cuda --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --dropout 0.1 --window-size 48 --attack-fraction 0.35 --attack-min-len 2 --attack-max-len 10 --n-train 131072 --n-val 16384 --samples 32768 --classes 32 --tokens-per-class 256 --epochs 10 --batch-size 768 --grad-accum 2 --lr 2e-4 --weight-decay 1e-2 --warmup-epochs 3 --num-workers 4 --alpha 0.5 --pos-weight 1.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
+OPEN_DATASET_ADFA_ARGS ?= --dataset adfa --data-dir ./data/adfa --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device cpu
+OPEN_DATASET_BETH_ARGS ?= --dataset beth --data-dir ./data/beth --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device cpu
+OPEN_DATASET_STATS_ARGS ?= --dataset adfa --data-dir ./data/adfa --stats-only --no-download --p 3 --r 8 --window-size 32 --stride 4 --device cpu
 
 # ---------------------------------------------------------------------------
 # Analysis defaults
@@ -35,6 +38,7 @@ INT8_ARGS ?= --r 8
         int8 hardware \
         train train-cpu train-gpu train-attention-cpu train-attention-gpu \
         compare-primes tune-threshold over-underfit ablate \
+        open-dataset open-adfa open-beth open-adfa-stats \
         ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7 \
         clean help clean-results clean-caches clean-checkpoints
 
@@ -121,6 +125,21 @@ ablate-p7: setup
 ablate: ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7
 
 # ---------------------------------------------------------------------------
+# Open datasets
+# ---------------------------------------------------------------------------
+open-dataset: setup
+	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_ADFA_ARGS)
+
+open-adfa: setup
+	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_ADFA_ARGS)
+
+open-beth: setup
+	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_BETH_ARGS)
+
+open-adfa-stats: setup
+	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_STATS_ARGS)
+
+# ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
 analysis: tune-threshold over-underfit compare-primes
@@ -164,6 +183,10 @@ help:
 	@echo "  make compare-primes  Run p=3,5,7 training comparisons"
 	@echo "  make tune-threshold  Run training with validation threshold search"
 	@echo "  make over-underfit   Run the learning vs generalization diagnostic"
+	@echo "  make open-dataset    Download ADFA-LD and run the open dataset benchmark"
+	@echo "  make open-adfa       Same as open-dataset"
+	@echo "  make open-beth       Download BETH and run the open dataset benchmark"
+	@echo "  make open-adfa-stats Show ADFA-LD stats only, no training"
 	@echo "  make analysis        Run the analysis workflows"
 	@echo "  make int8            Verify unsigned INT8 against 2-adic arithmetic"
 	@echo "  make ablate          Run the full ablation suite"

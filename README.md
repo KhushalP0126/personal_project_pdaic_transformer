@@ -62,6 +62,9 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
 18. What real dataset could replace it?
     Real syscall traces, process event logs, embedded device telemetry, or labeled intrusion datasets.
 
+19. How do I run on a real dataset?
+    Use `scripts/run_open_dataset.py` to download, parse, and benchmark ADFA-LD or BETH. The script reports the real attack rate, estimates `pos_weight`, checks the ultrametric assumption, compares IsolationForest against the p-adic model, and can repeat runs across multiple seeds.
+
 ## Model
 
 19. How does Hensel embedding work?
@@ -122,6 +125,9 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
 36. Can it be quantized/2-adic hardware mapped?
     Your repo already has INT8/2-adic verification code, but the full transformer is not yet hardware-mapped.
 
+37. What should I use for realistic training?
+    Turn on `--realistic-dataset` in `scripts/train_anomaly_detector.py`. That path uses idle-heavy windows, low attack rates, and a frequency-weighted loss. You can also benchmark the trained model with dynamic INT8 quantization from the open-dataset runner.
+
 ## Criticism
 
 37. What baselines are needed?
@@ -157,7 +163,7 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
     Your `p=7, r=16` big run took `72.7s` for 10 epochs. Repeat with larger `r`, window size, and batch size.
 
 47. How stable across seeds?
-    Not known yet. Run at least 3 seeds.
+    Use `scripts/run_open_dataset.py --seeds 3` or repeat the synthetic training scripts with different `--seed` values and compare AUROC/F1 variance.
 
 ## Final 3 Things To Do
 
@@ -171,7 +177,55 @@ python scripts/train_anomaly_detector.py --device cuda --p 7 --r 16 --alpha 0.0 
    Run the same setup for `p=3`, `p=5`, and `p=7`, then compare best AUROC/F1.
 
 3. Tune the threshold
-   Right now F1 depends on a fixed threshold. Add validation threshold search and report best F1, recall, precision, and false-positive rate.
+    Right now F1 depends on a fixed threshold. Add validation threshold search and report best F1, recall, precision, and false-positive rate.
+
+## Real Dataset Workflow
+
+Use this when you want to validate on ADFA-LD or BETH instead of synthetic windows.
+
+### ADFA-LD
+
+```bash
+make open-adfa
+```
+
+Or directly:
+
+```bash
+python scripts/run_open_dataset.py --dataset adfa --data-dir ./data/adfa
+```
+
+Add `--seeds 3 --quantize-int8` to get a quick stability sweep and CPU INT8 latency comparison.
+
+### BETH
+
+```bash
+make open-beth
+```
+
+Or directly:
+
+```bash
+python scripts/run_open_dataset.py --dataset beth --data-dir ./data/beth
+```
+
+Add `--seeds 3 --quantize-int8` for the same benchmarking path on BETH.
+
+### Stats only
+
+```bash
+make open-adfa-stats
+```
+
+This prints dataset size, real attack rate, `pos_weight`, and the ultrametric verdict without training.
+
+### Realistic training mode
+
+If you want to keep the synthetic generator but make it closer to hardware traces:
+
+```bash
+python scripts/train_anomaly_detector.py --realistic-dataset --realistic-attack-fraction 0.005 --idle-fraction 0.70
+```
 
 ## Quick Start
 
@@ -192,6 +246,12 @@ For the INT8 2-adic hardware dry-lab:
 make int8
 ```
 
+For a real dataset benchmark:
+
+```bash
+make open-adfa
+```
+
 ## Validation
 
 Run the standard-library tests:
@@ -201,3 +261,11 @@ make test
 ```
 
 The local reference output is stored in [`results/reference_benchmark.md`](results/reference_benchmark.md).
+
+## Make Targets
+
+- `make open-adfa` downloads and benchmarks ADFA-LD.
+- `make open-beth` downloads and benchmarks BETH.
+- `make open-adfa-stats` prints ADFA-LD stats without training.
+- `make train-cpu` runs the synthetic CPU smoke test.
+- `make train-attention-cpu` runs the attention model smoke test.

@@ -299,6 +299,61 @@ class TestTrainingSmoke(unittest.TestCase):
             result = training_module.train(cfg, torch.device("cpu"))
             self.assertIn("best_auroc", result)
 
+    def test_realistic_dataset_smoke(self) -> None:
+        from padic_transformer.dataset_realistic import RealisticBusDataset, RealisticDatasetConfig
+
+        cfg = BenchmarkConfig(p=3, r=8, samples=256, classes=4, tokens_per_class=32, seed=11)
+        hensel = generate_clustered_hensel_dataset(cfg)
+        realistic_cfg = RealisticDatasetConfig(
+            window_size=8,
+            attack_fraction=0.2,
+            idle_fraction=0.5,
+            seed=12,
+        )
+        ds = RealisticBusDataset(hensel, realistic_cfg, n_samples=40)
+        self.assertEqual(len(ds), 40)
+        self.assertGreater(ds.pos_weight, 0.0)
+        window, label = ds[0]
+        self.assertEqual(window.shape, (8, 8))
+        self.assertIn(float(label), (0.0, 1.0))
+
+    def test_temperature_helpers_smoke(self) -> None:
+        from padic_transformer.model_fixes import (
+            StreamingWindowScorer,
+            compute_diversity_regularization,
+            log_temperature_health,
+            quantize_dynamic_model,
+        )
+        from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
+
+        model = PadicAttentionAnomalyDetector(
+            p=3,
+            r=8,
+            d_model=32,
+            n_heads=4,
+            n_layers=1,
+            ffn_dim=64,
+            head_hidden=16,
+            d_digit=8,
+            max_seq_len=16,
+        )
+        digits = torch.randint(0, 3, (2, 8, 8))
+        _ = model.forward_with_attention(digits, return_metrics=True)
+        reg = compute_diversity_regularization(model)
+        self.assertTrue(torch.is_tensor(reg))
+        self.assertGreaterEqual(float(reg.item()), 0.0)
+        stats = log_temperature_health(model, epoch=1)
+        self.assertIn("temp_mean", stats)
+
+        scorer = StreamingWindowScorer(model, window_size=8)
+        stream = torch.randint(0, 3, (8, 8))
+        logits = scorer.push(stream)
+        self.assertIsNotNone(logits)
+
+        quantized = quantize_dynamic_model(model.cpu())
+        q_logits = quantized(torch.randint(0, 3, (2, 8, 8)))
+        self.assertEqual(q_logits.shape, (2,))
+
     def test_padic_distance_loss_empty_mask_is_finite(self) -> None:
         from scripts.experiment_controller import padic_distance_loss
 

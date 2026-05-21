@@ -32,6 +32,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attack-fraction", type=float, default=0.3)
     parser.add_argument("--attack-min-len", type=int, default=2)
     parser.add_argument("--attack-max-len", type=int, default=8)
+    parser.add_argument("--realistic-dataset", action="store_true", help="Use the realistic bus-trace dataset path")
+    parser.add_argument("--realistic-attack-fraction", type=float, default=0.005)
+    parser.add_argument("--idle-fraction", type=float, default=0.70)
+    parser.add_argument(
+        "--attack-kinds",
+        nargs="+",
+        default=["cross_class", "stuck_at", "burst", "ordering"],
+        help="Attack kinds to sample when using the realistic dataset",
+    )
     parser.add_argument("--n-train", type=int, default=65536)
     parser.add_argument("--n-val", type=int, default=8192)
     parser.add_argument("--samples", type=int, default=16384)
@@ -51,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--margin-pos", type=float, default=0.1)
     parser.add_argument("--margin-neg", type=float, default=0.5)
     parser.add_argument("--max-pairs", type=int, default=4096)
+    parser.add_argument("--max-seq-len", type=int, default=256)
     parser.add_argument("--attention", action="store_true", help="Use the soft p-adic attention model")
     parser.add_argument("--d-digit", type=int, default=16, help="Per-digit embedding width for soft attention")
     parser.add_argument("--checkpoint-dir", default="results/checkpoints")
@@ -76,12 +86,17 @@ def main() -> None:
         attack_fraction=args.attack_fraction,
         attack_min_len=args.attack_min_len,
         attack_max_len=args.attack_max_len,
+        realistic_dataset=args.realistic_dataset,
+        realistic_attack_fraction=args.realistic_attack_fraction,
+        idle_fraction=args.idle_fraction,
+        attack_kinds=tuple(args.attack_kinds),
         n_train=args.n_train,
         n_val=args.n_val,
         samples=args.samples,
         classes=args.classes,
         tokens_per_class=args.tokens_per_class,
         seed=args.seed,
+        max_seq_len=args.max_seq_len,
         epochs=args.epochs,
         batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
@@ -114,6 +129,7 @@ def main() -> None:
                 head_hidden=cfg.head_hidden,
                 d_digit=args.d_digit,
                 dropout=cfg.dropout,
+                max_seq_len=cfg.max_seq_len,
             )
 
         train(config, device, model_factory=factory)
