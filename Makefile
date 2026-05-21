@@ -18,9 +18,12 @@ TRAIN_CPU_ARGS ?= --device cpu --p 3 --r 8 --d-model 64 --n-heads 4 --n-layers 2
 TRAIN_ATTENTION_CPU_ARGS ?= --attention --device cpu --p 3 --r 8 --d-model 64 --n-heads 4 --n-layers 2 --ffn-dim 256 --head-hidden 32 --dropout 0.1 --d-digit 8 --window-size 16 --attack-fraction 0.3 --attack-min-len 2 --attack-max-len 4 --n-train 1024 --n-val 256 --samples 4096 --classes 16 --tokens-per-class 64 --epochs 3 --batch-size 64 --lr 3e-4 --num-workers 0 --save-every 999
 TRAIN_ATTENTION_GPU_ARGS ?= --attention --device cuda --p 3 --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --dropout 0.1 --d-digit 16 --window-size 48 --attack-fraction 0.35 --attack-min-len 2 --attack-max-len 10 --n-train 131072 --n-val 16384 --samples 32768 --classes 32 --tokens-per-class 256 --epochs 30 --batch-size 768 --grad-accum 2 --lr 2e-4 --weight-decay 1e-2 --warmup-epochs 3 --num-workers 4 --alpha 0.5 --pos-weight 1.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
 TRAIN_ATTENTION_BCE_GPU_ARGS ?= --attention --device cuda --p 3 --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --dropout 0.1 --d-digit 16 --window-size 48 --attack-fraction 0.30 --attack-min-len 2 --attack-max-len 10 --n-train 131072 --n-val 16384 --samples 32768 --classes 32 --tokens-per-class 256 --epochs 30 --batch-size 768 --grad-accum 2 --lr 1e-4 --weight-decay 1e-2 --warmup-epochs 3 --num-workers 4 --alpha 0.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
+TRAIN_ATTENTION_RULE_GPU_ARGS ?= --attention --device cuda --p 3 --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --dropout 0.1 --d-digit 16 --window-size 48 --hierarchy-rule-dataset --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --attack-fraction 0.30 --n-train 131072 --n-val 16384 --samples 32768 --classes 32 --tokens-per-class 256 --epochs 30 --batch-size 768 --grad-accum 2 --lr 1e-4 --weight-decay 1e-2 --warmup-epochs 3 --num-workers 4 --alpha 0.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
 TRAIN_ATTENTION_REALISTIC_GPU_ARGS ?= --attention --device cuda --p 3 --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --dropout 0.1 --d-digit 16 --window-size 48 --realistic-dataset --realistic-attack-fraction 0.005 --idle-fraction 0.70 --n-train 131072 --n-val 16384 --samples 32768 --classes 32 --tokens-per-class 256 --epochs 30 --batch-size 768 --grad-accum 2 --lr 1e-4 --weight-decay 1e-2 --warmup-epochs 3 --num-workers 4 --alpha 0.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
 COMPARE_TRAIN_BASE_ARGS ?= --device cuda --r 16 --d-model 384 --n-heads 8 --n-layers 6 --ffn-dim 1536 --head-hidden 192 --dropout 0.1 --window-size 48 --attack-fraction 0.35 --attack-min-len 2 --attack-max-len 10 --n-train 131072 --n-val 16384 --samples 32768 --classes 32 --tokens-per-class 256 --epochs 10 --batch-size 768 --grad-accum 2 --lr 2e-4 --weight-decay 1e-2 --warmup-epochs 3 --num-workers 4 --alpha 0.5 --pos-weight 1.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
 SWEEP_P_ARGS ?= --sweep-p-bases --device cpu --p-list 3 5 7 --sweep-r 8 --sweep-samples 512 --sweep-classes 16 --sweep-tokens-per-class 64 --sweep-window-size 32 --sweep-attack-fraction 0.30 --sweep-attack-min-len 2 --sweep-attack-max-len 8 --sweep-batch-size 64 --sweep-batches 4
+BASELINE_RULE_ARGS ?= --device cpu --hierarchy-rule-dataset --p 3 --r 8 --samples 4096 --classes 16 --tokens-per-class 64 --window-size 32 --attack-fraction 0.30 --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --train-samples 2048 --val-samples 512 --epochs 5 --output-json results/baseline_report.json
+TRAINED_EVAL_ARGS ?= --device cpu --trained-eval-checkpoint results/checkpoints/best.pt --trained-eval-dataset hierarchy_rules --trained-eval-samples 512 --trained-eval-window-size 32 --trained-eval-attack-fraction 0.30 --trained-eval-batch-size 64
 OPEN_DATASET_ADFA_ARGS ?= --dataset adfa --data-dir ./data/adfa --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device cpu
 OPEN_DATASET_BETH_ARGS ?= --dataset beth --data-dir ./data/beth --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device cpu
 OPEN_DATASET_STATS_ARGS ?= --dataset adfa --data-dir ./data/adfa --stats-only --no-download --p 3 --r 8 --window-size 32 --stride 4 --device cpu
@@ -35,13 +38,13 @@ ANALYSIS_ARGS ?= --device cuda --p 3 --r 8 --d-model 128 --n-heads 4 --n-layers 
 # ---------------------------------------------------------------------------
 INT8_ARGS ?= --r 8
 
-.DEFAULT_GOAL := all
+.DEFAULT_GOAL := help
 
 .PHONY: all setup test cpu gpu benchmark run \
         int8 hardware \
-        train train_norm tnorm-cpu tnorm-gpu train-cpu train-gpu train-attention-cpu train-attention-gpu train-attention-bce-gpu train-attention-realistic-gpu \
-        compare-primes sweep-p-bases tune-threshold over-underfit ablate \
-        open-dataset open-adfa open-beth open-adfa-stats \
+        train-attention-cpu train-attention-bce-gpu train-attention-hierarchy-gpu train-attention-realistic-gpu \
+        compare-primes sweep-p-bases run-baselines eval-trained-attention tune-threshold over-underfit ablate \
+        open-adfa open-beth open-adfa-stats \
         ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7 \
         clean help clean-results clean-caches clean-checkpoints
 
@@ -81,28 +84,14 @@ gpu: setup
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-train: train_norm
-
-train_norm: tnorm-gpu
-
-tnorm-gpu: setup
-	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_GPU_ARGS)
-
-tnorm-cpu: setup
-	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_CPU_ARGS)
-
-train-cpu: tnorm-cpu
-
-train-gpu: tnorm-gpu
-
 train-attention-cpu: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_CPU_ARGS)
 
-train-attention-gpu: setup
-	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_GPU_ARGS)
-
 train-attention-bce-gpu: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_BCE_GPU_ARGS)
+
+train-attention-hierarchy-gpu: setup
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_RULE_GPU_ARGS)
 
 train-attention-realistic-gpu: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_REALISTIC_GPU_ARGS)
@@ -115,6 +104,12 @@ compare-primes: setup
 
 sweep-p-bases: setup
 	$(VENV_PYTHON) scripts/run_padic_benchmark.py $(SWEEP_P_ARGS)
+
+run-baselines: setup
+	$(VENV_PYTHON) scripts/run_baselines.py $(BASELINE_RULE_ARGS)
+
+eval-trained-attention: setup
+	$(VENV_PYTHON) scripts/run_padic_benchmark.py $(TRAINED_EVAL_ARGS)
 
 tune-threshold: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_GPU_ARGS) --log-json results/tune_threshold.json --log-md results/tune_threshold.md
@@ -145,9 +140,6 @@ ablate: ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 a
 # ---------------------------------------------------------------------------
 # Open datasets
 # ---------------------------------------------------------------------------
-open-dataset: setup
-	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_ADFA_ARGS)
-
 open-adfa: setup
 	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_ADFA_ARGS)
 
@@ -193,23 +185,18 @@ help:
 	@echo "  make setup           Create .venv and install the editable package"
 	@echo "  make test            Run unit tests"
 	@echo "  make cpu             Run the local CPU benchmark"
-	@echo "  make gpu             Run the cloud CUDA benchmark"
-	@echo "  make train           Alias for make train_norm"
-	@echo "  make train_norm      Alias for make tnorm-gpu"
-	@echo "  make tnorm-gpu       Run the normal GPU training pipeline"
-	@echo "  make tnorm-cpu       Run the normal CPU training pipeline"
-	@echo "  make train-cpu       Alias for make tnorm-cpu"
-	@echo "  make train-gpu       Alias for make tnorm-gpu"
-	@echo "  make train-attention-cpu  Run the soft p-adic attention CPU training pipeline"
-	@echo "  make train-attention-gpu  Run the soft p-adic attention GPU training pipeline"
+	@echo "  make gpu             Run the CUDA benchmark"
+	@echo "  make train-attention-cpu  Run the hybrid attention CPU smoke-training path"
 	@echo "  make train-attention-bce-gpu  Run the hybrid attention model with BCE-first training"
+	@echo "  make train-attention-hierarchy-gpu  Run the hierarchy-rule dataset training path"
 	@echo "  make train-attention-realistic-gpu  Run the hybrid attention model on the realistic dataset path"
 	@echo "  make compare-primes  Run p=3,5,7 training comparisons"
-	@echo "  make sweep-p-bases   Run the attention hierarchy/sparsity benchmark sweep"
+	@echo "  make sweep-p-bases   Run the untrained attention hierarchy/sparsity benchmark sweep"
+	@echo "  make run-baselines   Run majority/logreg/MLP/transformer/PDAIC baseline comparisons"
+	@echo "  make eval-trained-attention  Evaluate a trained attention checkpoint on true/shuffled/random hierarchy"
 	@echo "  make tune-threshold  Run training with validation threshold search"
 	@echo "  make over-underfit   Run the learning vs generalization diagnostic"
-	@echo "  make open-dataset    Download ADFA-LD and run the open dataset benchmark"
-	@echo "  make open-adfa       Same as open-dataset"
+	@echo "  make open-adfa       Download ADFA-LD and run the open dataset benchmark"
 	@echo "  make open-beth       Download BETH and run the open dataset benchmark"
 	@echo "  make open-adfa-stats Show ADFA-LD stats only, no training"
 	@echo "  make analysis        Run the analysis workflows"

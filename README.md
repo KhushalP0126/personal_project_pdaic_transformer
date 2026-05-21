@@ -65,6 +65,9 @@ This repo builds a p-adic anomaly detection pipeline around Hensel-coded token s
 19. How do I run on a real dataset?
     Use `scripts/run_open_dataset.py` to download, parse, and benchmark ADFA-LD or BETH. The script reports the real attack rate, estimates `pos_weight`, checks the ultrametric assumption, compares IsolationForest against the p-adic model, and can repeat runs across multiple seeds.
 
+20. What is the hierarchy-rule dataset?
+    It is a synthetic benchmark where normal sequences stay inside the same p-adic subtree for several steps, and anomalies jump to a different subtree. That makes the hierarchy signal explicit instead of only testing replacement attacks.
+
 ## Model
 
 19. How does Hensel embedding work?
@@ -88,13 +91,13 @@ This repo builds a p-adic anomaly detection pipeline around Hensel-coded token s
 ## Results
 
 25. What metric matters most during development?
-    AUROC is the first sanity check because it tells you whether anomalous windows rank above normal windows at all. If AUROC stays near `0.5`, the model is not learning a useful signal regardless of accuracy.
+    AUROC is the first sanity check because it tells you whether anomalous windows rank above normal windows at all. The code now uses exact rank-based AUROC instead of an approximate threshold sweep. If AUROC stays near `0.5`, the model is not learning a useful signal regardless of accuracy.
 
 26. Why can accuracy look decent while the detector is still bad?
     The synthetic dataset is class-imbalanced by design, so majority-class accuracy can look fine even when AUROC is near random. The training code now computes `pos_weight` from the dataset and reports score-gap diagnostics to make this visible.
 
 27. What extra diagnostics are available now?
-    Validation now logs normal/anomaly score means and the score gap. The attention path also reports hierarchy metrics: p-adic attention correlation, same-cluster attention, different-cluster attention, and hierarchy gap.
+    Validation now logs normal/anomaly score means and the score gap. The attention path also reports hierarchy metrics: p-adic attention correlation, same-cluster attention, different-cluster attention, hierarchy gap, and depth-specific gaps for shared p-adic prefixes.
 
 28. Is it overfitting?
     Possibly. Training loss steadily decreases while validation loss stays high/noisy.
@@ -139,30 +142,33 @@ This repo builds a p-adic anomaly detection pipeline around Hensel-coded token s
 39. What if p-adic structure is randomized?
     That should be an ablation. If AUROC and hierarchy metrics stay similar after shuffling hierarchy, the p-adic design is not carrying the result.
 
-40. Can attackers evade it?
+40. What baselines are available?
+    The baseline runner now includes majority-class, logistic regression, MLP, vanilla transformer, Hensel transformer, and p-adic attention variants with true, shuffled, and random hierarchy.
+
+41. Can attackers evade it?
     Yes, likely. Any anomaly detector can be evaded if attackers learn normal-looking patterns.
 
-41. What convinces a skeptical reviewer?
+42. What convinces a skeptical reviewer?
     Real datasets, baselines, ablations, multiple seeds, threshold analysis, and runtime/deployment measurements.
 
 ## Next Experiments
 
-42. Compare `p=3,5,7`?
+43. Compare `p=3,5,7`?
     You should run the same training config for all three and compare AUROC/F1/runtime.
 
-43. Compare `r=8,16,32`?
+44. Compare `r=8,16,32`?
     Yes. This tests whether more p-adic precision improves detection.
 
-44. What happens without contrastive loss?
+45. What happens without contrastive loss?
     Run with `--alpha 0.0`. That tells you whether the p-adic contrastive term helps.
 
-45. What happens with a smaller model?
+46. What happens with a smaller model?
     Try `d_model=128`, fewer layers, and compare AUROC vs speed.
 
-46. How does runtime scale?
+47. How does runtime scale?
     Your `p=7, r=16` big run took `72.7s` for 10 epochs. Repeat with larger `r`, window size, and batch size.
 
-47. How stable across seeds?
+48. How stable across seeds?
     Use `scripts/run_open_dataset.py --seeds 3` or repeat the synthetic training scripts with different `--seed` values and compare AUROC/F1 variance.
 
 ## Final 3 Things To Do
@@ -176,7 +182,10 @@ make train-attention-bce-gpu
 2. Compare primes and hierarchy behavior
    Run the same setup for `p=3`, `p=5`, and `p=7`, then compare best AUROC/F1 together with hierarchy correlation and hierarchy gap.
 
-3. Move to realistic training
+3. Move to hierarchy-rule and baseline checks
+   Run the hierarchy-rule dataset and the baseline suite to confirm the hierarchy signal survives against shuffled and random hierarchy controls.
+
+4. Move to realistic training
    After BCE-first synthetic training shows separation, run the realistic path and check whether hierarchy metrics remain meaningful.
 
 ## Real Dataset Workflow
@@ -227,6 +236,30 @@ If you want to keep the synthetic generator but make it closer to hardware trace
 make train-attention-realistic-gpu
 ```
 
+### Hierarchy-rule training
+
+If you want the cleanest hierarchy test:
+
+```bash
+make train-attention-hierarchy-gpu
+```
+
+### Baseline suite
+
+Run majority-class, linear, MLP, transformer, and hierarchy-control baselines with:
+
+```bash
+make run-baselines
+```
+
+### Trained checkpoint evaluation
+
+Evaluate a saved attention checkpoint against true, shuffled, and random hierarchy variants:
+
+```bash
+make eval-trained-attention
+```
+
 ## Quick Start
 
 ```bash
@@ -240,10 +273,18 @@ For the recommended GPU experiment path:
 make train-attention-bce-gpu
 ```
 
-For the hierarchy and sparsity sweep:
+For the hierarchy and sparsity sweep on an untrained model:
 
 ```bash
 make sweep-p-bases
+```
+
+For the hierarchy-rule benchmark and controls:
+
+```bash
+make train-attention-hierarchy-gpu
+make run-baselines
+make eval-trained-attention
 ```
 
 For the INT8 2-adic hardware dry-lab:
@@ -289,7 +330,11 @@ The local reference output is stored in [`results/reference_benchmark.md`](resul
 - `make open-adfa` downloads and benchmarks ADFA-LD.
 - `make open-beth` downloads and benchmarks BETH.
 - `make open-adfa-stats` prints ADFA-LD stats without training.
+- `make cpu` and `make gpu` run the benchmark path, not training.
+- `make train-attention-cpu` is the local smoke-training path.
 - `make train-attention-bce-gpu` is the recommended first GPU run for the hybrid attention model.
+- `make train-attention-hierarchy-gpu` runs the hierarchy-rule benchmark training path.
 - `make train-attention-realistic-gpu` runs the realistic idle-heavy training path.
-- `make sweep-p-bases` reports sparsity plus hierarchy-alignment metrics across `p`.
-- `make tnorm-gpu` and `make tnorm-cpu` still run the non-attention baseline path.
+- `make run-baselines` runs the majority, linear, MLP, transformer, and hierarchy-control baselines.
+- `make eval-trained-attention` evaluates a trained checkpoint against true, shuffled, and random hierarchy controls.
+- `make sweep-p-bases` reports sparsity plus hierarchy-alignment metrics across `p` on an untrained model.
