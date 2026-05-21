@@ -237,7 +237,7 @@ make train-cpu
 For a GPU training run:
 
 ```bash
-make train
+make tnorm-gpu
 ```
 
 For the INT8 2-adic hardware dry-lab:
@@ -267,5 +267,7 @@ The local reference output is stored in [`results/reference_benchmark.md`](resul
 - `make open-adfa` downloads and benchmarks ADFA-LD.
 - `make open-beth` downloads and benchmarks BETH.
 - `make open-adfa-stats` prints ADFA-LD stats without training.
-- `make train-cpu` runs the synthetic CPU smoke test.
+- `make tnorm-gpu` runs the normal GPU training pipeline.
+- `make tnorm-cpu` runs the normal CPU training pipeline.
+- `make train-cpu` remains as an alias for `make tnorm-cpu`.
 - `make train-attention-cpu` runs the attention model smoke test.

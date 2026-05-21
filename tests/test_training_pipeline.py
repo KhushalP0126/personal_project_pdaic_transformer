@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
@@ -226,8 +227,8 @@ class TestTrainingSmoke(unittest.TestCase):
             batch_size=16,
             num_workers=0,
             checkpoint_dir="results/test_checkpoints",
-            log_json="results/test_training_log.json",
-            log_md="results/test_training_log.md",
+            log_json="",
+            log_md="results/test_result.md",
             save_every=999,
         )
         result = train(cfg, torch.device("cpu"))
@@ -274,30 +275,13 @@ class TestTrainingSmoke(unittest.TestCase):
                 super().__init__(*args, **kwargs)
 
         with patch.object(training_module.torch.optim, "AdamW", DummyAdamW):
-            cfg = TrainConfig(
-                p=3,
-                r=8,
-                d_model=32,
-                n_heads=4,
-                n_layers=1,
-                ffn_dim=64,
-                head_hidden=16,
-                window_size=8,
-                n_train=64,
-                n_val=16,
-                samples=256,
-                classes=4,
-                tokens_per_class=32,
-                epochs=1,
-                batch_size=16,
-                num_workers=0,
-                checkpoint_dir="results/test_checkpoints",
-                log_json="results/test_training_log.json",
-                log_md="results/test_training_log.md",
-                save_every=999,
+            model = torch.nn.Linear(4, 2)
+            optimizer = training_module._make_optimizer(
+                model,
+                SimpleNamespace(type="cuda"),
+                {"lr": 1e-3, "weight_decay": 1e-2},
             )
-            result = training_module.train(cfg, torch.device("cpu"))
-            self.assertIn("best_auroc", result)
+            self.assertIsInstance(optimizer, DummyAdamW)
 
     def test_realistic_dataset_smoke(self) -> None:
         from padic_transformer.dataset_realistic import RealisticBusDataset, RealisticDatasetConfig

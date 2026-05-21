@@ -36,7 +36,7 @@ INT8_ARGS ?= --r 8
 
 .PHONY: all setup test cpu gpu benchmark run \
         int8 hardware \
-        train train-cpu train-gpu train-attention-cpu train-attention-gpu \
+        train train_norm tnorm-cpu tnorm-gpu train-cpu train-gpu train-attention-cpu train-attention-gpu \
         compare-primes tune-threshold over-underfit ablate \
         open-dataset open-adfa open-beth open-adfa-stats \
         ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7 \
@@ -78,13 +78,19 @@ gpu: setup
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-train: train-gpu
+train: train_norm
 
-train-gpu: setup
+train_norm: tnorm-gpu
+
+tnorm-gpu: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_GPU_ARGS)
 
-train-cpu: setup
+tnorm-cpu: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_CPU_ARGS)
+
+train-cpu: tnorm-cpu
+
+train-gpu: tnorm-gpu
 
 train-attention-cpu: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_CPU_ARGS)
@@ -176,8 +182,12 @@ help:
 	@echo "  make test            Run unit tests"
 	@echo "  make cpu             Run the local CPU benchmark"
 	@echo "  make gpu             Run the cloud CUDA benchmark"
-	@echo "  make train           Run the GPU training pipeline"
-	@echo "  make train-cpu       Run the CPU training smoke test"
+	@echo "  make train           Alias for make train_norm"
+	@echo "  make train_norm      Alias for make tnorm-gpu"
+	@echo "  make tnorm-gpu       Run the normal GPU training pipeline"
+	@echo "  make tnorm-cpu       Run the normal CPU training pipeline"
+	@echo "  make train-cpu       Alias for make tnorm-cpu"
+	@echo "  make train-gpu       Alias for make tnorm-gpu"
 	@echo "  make train-attention-cpu  Run the soft p-adic attention CPU training pipeline"
 	@echo "  make train-attention-gpu  Run the soft p-adic attention GPU training pipeline"
 	@echo "  make compare-primes  Run p=3,5,7 training comparisons"

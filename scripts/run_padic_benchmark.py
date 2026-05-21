@@ -51,7 +51,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distance-pairs", type=int, default=200000)
     parser.add_argument("--seed", type=int, default=20260504)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
-    parser.add_argument("--output-json", default="results/reference_benchmark.json")
     parser.add_argument("--output-md", default="results/reference_benchmark.md")
     return parser.parse_args()
 
@@ -389,7 +388,6 @@ def write_markdown(path: Path, report: dict[str, object]) -> None:
 
 def main() -> None:
     args = parse_args()
-    json_path = safe_results_path(args.output_json)
     md_path = safe_results_path(args.output_md)
     device = resolve_device(args.device)
 
@@ -438,9 +436,7 @@ def main() -> None:
         },
         "runs": runs,
     }
-    json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     write_markdown(md_path, report)
-    print(f"Wrote {json_path.relative_to(REPO_ROOT)}")
     print(f"Wrote {md_path.relative_to(REPO_ROOT)}")
 
 
