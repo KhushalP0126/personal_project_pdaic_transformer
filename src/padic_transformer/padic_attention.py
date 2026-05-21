@@ -16,6 +16,65 @@ def _attention_sparsity(weights: torch.Tensor, threshold: float = 1e-4) -> torch
     return (weights < threshold).to(torch.float32).mean()
 
 
+def _hard_prefix_matrix(digits: torch.Tensor) -> torch.Tensor:
+    if digits.ndim != 3:
+        raise ValueError("digits must have shape [batch, seq, r]")
+    equal = digits.unsqueeze(2) == digits.unsqueeze(1)
+    return equal.to(torch.int64).cumprod(dim=-1).sum(dim=-1)
+
+
+def _safe_masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    if values.shape != mask.shape:
+        raise ValueError("values and mask must have matching shapes")
+    masked = values.masked_select(mask)
+    if masked.numel() == 0:
+        return values.new_tensor(float("nan"))
+    return masked.mean()
+
+
+def _attention_hierarchy_metrics(
+    weights: torch.Tensor,
+    digits: torch.Tensor,
+    key_padding_mask: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    if weights.ndim != 3:
+        raise ValueError("weights must have shape [batch, seq, seq]")
+    hard_prefix = _hard_prefix_matrix(digits).to(dtype=weights.dtype)
+    batch, seq, _ = hard_prefix.shape
+    valid = torch.ones((batch, seq), dtype=torch.bool, device=weights.device)
+    if key_padding_mask is not None:
+        valid = ~key_padding_mask
+
+    pair_mask = valid.unsqueeze(2) & valid.unsqueeze(1)
+    pair_mask = pair_mask & ~torch.eye(seq, dtype=torch.bool, device=weights.device).unsqueeze(0)
+
+    same_cluster = pair_mask & (hard_prefix > 0)
+    diff_cluster = pair_mask & (hard_prefix == 0)
+    same_cluster_attention = _safe_masked_mean(weights, same_cluster)
+    diff_cluster_attention = _safe_masked_mean(weights, diff_cluster)
+    hierarchy_gap = same_cluster_attention - diff_cluster_attention
+
+    flat_weights = weights.masked_select(pair_mask)
+    flat_prefix = hard_prefix.masked_select(pair_mask)
+    if flat_weights.numel() < 2:
+        corr = weights.new_tensor(float("nan"))
+    else:
+        centered_weights = flat_weights - flat_weights.mean()
+        centered_prefix = flat_prefix - flat_prefix.mean()
+        denom = centered_weights.norm() * centered_prefix.norm()
+        if float(denom.item()) == 0.0:
+            corr = weights.new_tensor(float("nan"))
+        else:
+            corr = (centered_weights @ centered_prefix) / denom
+
+    return {
+        "padic_attention_corr": corr,
+        "same_cluster_attention": same_cluster_attention,
+        "diff_cluster_attention": diff_cluster_attention,
+        "hierarchy_gap": hierarchy_gap,
+    }
+
+
 class SoftPadicValuation(nn.Module):
     """Differentiable approximation of shared low-order Hensel prefix length."""
 
@@ -122,7 +181,9 @@ class PadicAttentionHead(nn.Module):
         super().__init__()
         self.valuation = SoftPadicValuation(p=p, r=r, d_digit=d_digit)
         self.logit_scale = nn.Parameter(torch.tensor(5.0))
-        self.logit_bias = nn.Parameter(torch.tensor(0.0))
+        self.query_proj = nn.Linear(d_model, d_head)
+        self.key_proj = nn.Linear(d_model, d_head)
+        self.padic_gate = nn.Parameter(torch.tensor(0.0))
         self.value_proj = nn.Linear(d_model, d_head)
         self.dropout = nn.Dropout(dropout)
 
@@ -153,7 +214,10 @@ class PadicAttentionHead(nn.Module):
         )
         raw = self.valuation(flat_a, flat_b).reshape(batch, seq, seq).to(dtype=x.dtype)
         scale = self.logit_scale.clamp(0.1, 25.0)
-        logits = scale * raw + self.logit_bias
+        q = self.query_proj(x)
+        k = self.key_proj(x)
+        content_logits = torch.bmm(q, k.transpose(1, 2)) / math.sqrt(q.shape[-1])
+        logits = content_logits + self.padic_gate.sigmoid() * (scale * raw)
 
         if key_padding_mask is not None:
             logits = logits.masked_fill(key_padding_mask.unsqueeze(1), torch.finfo(logits.dtype).min)
@@ -166,7 +230,11 @@ class PadicAttentionHead(nn.Module):
             out = out * (~key_padding_mask).unsqueeze(-1).to(out.dtype)
         if not return_metrics:
             return out, weights
-        metrics = {"attention_sparsity": _attention_sparsity(weights)}
+        metrics = {
+            "attention_sparsity": _attention_sparsity(weights),
+            "padic_gate": self.padic_gate.sigmoid().detach(),
+        }
+        metrics.update(_attention_hierarchy_metrics(weights, digits, key_padding_mask))
         return out, weights, metrics
 
 
@@ -200,7 +268,14 @@ class PadicMultiHeadAttention(nn.Module):
     ) -> tuple[torch.Tensor, list[torch.Tensor]] | tuple[torch.Tensor, list[torch.Tensor], dict[str, torch.Tensor]]:
         outputs = []
         weights = []
-        sparsities = []
+        metric_lists: dict[str, list[torch.Tensor]] = {
+            "attention_sparsity": [],
+            "padic_attention_corr": [],
+            "same_cluster_attention": [],
+            "diff_cluster_attention": [],
+            "hierarchy_gap": [],
+            "padic_gate": [],
+        }
         for head in self.heads:
             if return_metrics:
                 out, attn, metrics = head(
@@ -209,7 +284,8 @@ class PadicMultiHeadAttention(nn.Module):
                     key_padding_mask=key_padding_mask,
                     return_metrics=True,
                 )
-                sparsities.append(metrics["attention_sparsity"])
+                for key in metric_lists:
+                    metric_lists[key].append(metrics[key])
             else:
                 out, attn = head(digits, x, key_padding_mask=key_padding_mask)
             outputs.append(out)
@@ -217,7 +293,10 @@ class PadicMultiHeadAttention(nn.Module):
         out = self.out_proj(torch.cat(outputs, dim=-1))
         if not return_metrics:
             return out, weights
-        metrics = {"attention_sparsity": torch.stack(sparsities).mean() if sparsities else out.new_tensor(0.0)}
+        metrics = {
+            key: torch.stack(values).mean() if values else out.new_tensor(float("nan"))
+            for key, values in metric_lists.items()
+        }
         return out, weights, metrics
 
 
@@ -308,7 +387,14 @@ class PadicAttentionEncoder(nn.Module):
         return_metrics: bool = False,
     ) -> tuple[torch.Tensor, list[list[torch.Tensor]]] | tuple[torch.Tensor, list[list[torch.Tensor]], dict[str, torch.Tensor]]:
         all_weights = []
-        layer_sparsities = []
+        layer_metrics: dict[str, list[torch.Tensor]] = {
+            "attention_sparsity": [],
+            "padic_attention_corr": [],
+            "same_cluster_attention": [],
+            "diff_cluster_attention": [],
+            "hierarchy_gap": [],
+            "padic_gate": [],
+        }
         for layer in self.layers:
             if return_metrics:
                 x, weights, metrics = layer(
@@ -317,14 +403,16 @@ class PadicAttentionEncoder(nn.Module):
                     src_key_padding_mask=src_key_padding_mask,
                     return_metrics=True,
                 )
-                layer_sparsities.append(metrics["attention_sparsity"])
+                for key in layer_metrics:
+                    layer_metrics[key].append(metrics[key])
             else:
                 x, weights = layer(digits, x, src_key_padding_mask=src_key_padding_mask)
             all_weights.append(weights)
         if not return_metrics:
             return x, all_weights
         metrics = {
-            "attention_sparsity": torch.stack(layer_sparsities).mean() if layer_sparsities else x.new_tensor(0.0)
+            key: torch.stack(values).mean() if values else x.new_tensor(float("nan"))
+            for key, values in layer_metrics.items()
         }
         return x, all_weights, metrics
 

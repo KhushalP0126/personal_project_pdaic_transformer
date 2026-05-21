@@ -76,7 +76,7 @@ def _attack_cross_class(
     majority_label: int,
     rng: torch.Generator,
 ) -> torch.Tensor:
-    candidate_idx = (token_labels != majority_label).nonzero(as_tuple=True)[0]
+    candidate_idx = ((token_labels >= 0) & (token_labels != majority_label)).nonzero(as_tuple=True)[0]
     if candidate_idx.numel() == 0:
         warnings.warn(
             "cross_class attack: no cross-class tokens found. Returning unmodified window.",
@@ -95,10 +95,19 @@ def _attack_stuck_at(
     inject_pos: int,
     attack_len: int,
     token_digits: torch.Tensor,
+    token_labels: torch.Tensor,
     rng: torch.Generator,
 ) -> torch.Tensor:
-    pick = int(torch.randint(0, token_digits.shape[0], (1,), generator=rng).item())
-    stuck_token = token_digits[pick].clone()
+    candidate_idx = (token_labels >= 0).nonzero(as_tuple=True)[0]
+    if candidate_idx.numel() == 0:
+        warnings.warn(
+            "stuck_at attack: no non-idle tokens found. Returning unmodified window.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return base
+    pick = int(torch.randint(0, candidate_idx.numel(), (1,), generator=rng).item())
+    stuck_token = token_digits[candidate_idx[pick]].clone()
     base[inject_pos : inject_pos + attack_len] = stuck_token.unsqueeze(0).expand(attack_len, -1)
     return base
 
@@ -129,8 +138,14 @@ def _attack_ordering(
     rng: torch.Generator,
 ) -> torch.Tensor:
     segment = base[inject_pos : inject_pos + attack_len].clone()
-    perm = torch.randperm(attack_len, generator=rng)
-    base[inject_pos : inject_pos + attack_len] = segment[perm]
+    if attack_len <= 1:
+        return base
+    for _ in range(8):
+        perm = torch.randperm(attack_len, generator=rng)
+        reordered = segment[perm]
+        if not torch.equal(reordered, segment):
+            base[inject_pos : inject_pos + attack_len] = reordered
+            return base
     return base
 
 
@@ -223,34 +238,47 @@ class RealisticBusDataset(Dataset):
         rng: torch.Generator,
     ) -> tuple[torch.Tensor, AttackKind]:
         base = token_digits[start : start + window].clone()
-
         eff_max = min(self.cfg.attack_max_len, window)
-        attack_len = int(torch.randint(self.cfg.attack_min_len, eff_max + 1, (1,), generator=rng).item())
-        inject_pos = int(torch.randint(0, window - attack_len + 1, (1,), generator=rng).item())
+        for _ in range(12):
+            attack_len = int(torch.randint(self.cfg.attack_min_len, eff_max + 1, (1,), generator=rng).item())
+            inject_pos = int(torch.randint(0, window - attack_len + 1, (1,), generator=rng).item())
 
-        kind_idx = int(torch.randint(0, len(self.cfg.attack_kinds), (1,), generator=rng).item())
-        kind: AttackKind = self.cfg.attack_kinds[kind_idx]
+            kind_idx = int(torch.randint(0, len(self.cfg.attack_kinds), (1,), generator=rng).item())
+            kind: AttackKind = self.cfg.attack_kinds[kind_idx]
 
-        region = torch.arange(start + inject_pos, start + inject_pos + attack_len)
-        window_labels = token_labels[region]
-        valid_mask = window_labels >= 0
-        if valid_mask.sum() == 0:
-            majority_label = 0
-        else:
-            majority_label = int(window_labels[valid_mask].mode().values.item())
+            region = torch.arange(start + inject_pos, start + inject_pos + attack_len)
+            window_labels = token_labels[region]
+            valid_mask = window_labels >= 0
+            if valid_mask.sum() == 0:
+                majority_label = 0
+            else:
+                majority_label = int(window_labels[valid_mask].mode().values.item())
 
-        if kind == "cross_class":
-            base = _attack_cross_class(
-                base, inject_pos, attack_len, token_digits, token_labels, majority_label, rng
-            )
-        elif kind == "stuck_at":
-            base = _attack_stuck_at(base, inject_pos, attack_len, token_digits, rng)
-        elif kind == "burst":
-            base = _attack_burst(base, inject_pos, attack_len, token_digits, token_labels, rng)
-        elif kind == "ordering":
-            base = _attack_ordering(base, inject_pos, attack_len, rng)
+            candidate = base.clone()
+            if kind == "cross_class":
+                candidate = _attack_cross_class(
+                    candidate, inject_pos, attack_len, token_digits, token_labels, majority_label, rng
+                )
+            elif kind == "stuck_at":
+                candidate = _attack_stuck_at(candidate, inject_pos, attack_len, token_digits, token_labels, rng)
+            elif kind == "burst":
+                candidate = _attack_burst(candidate, inject_pos, attack_len, token_digits, token_labels, rng)
+            elif kind == "ordering":
+                candidate = _attack_ordering(candidate, inject_pos, attack_len, rng)
 
-        return base, kind
+            if not torch.equal(
+                candidate[inject_pos : inject_pos + attack_len],
+                base[inject_pos : inject_pos + attack_len],
+            ):
+                return candidate, kind
+
+        warnings.warn(
+            "RealisticBusDataset._inject_attack: failed to generate a non-trivial attack after several attempts. "
+            "Returning the original window.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return base, self.cfg.attack_kinds[0]
 
     def __len__(self) -> int:
         return self.n_samples

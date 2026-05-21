@@ -91,29 +91,41 @@ class SyscallAnomalyDataset(Dataset):
 
     def _inject_attack(self, start: int, window: int, rng: torch.Generator) -> torch.Tensor:
         base = self._get_window(start, window).clone()
-        n_tokens = self.hensel_data.token_digits.shape[0]
-
         eff_max = min(self.cfg.attack_max_len, window)
-        attack_len = int(torch.randint(self.cfg.attack_min_len, eff_max + 1, (1,), generator=rng).item())
-        inject_pos = int(torch.randint(0, window - attack_len + 1, (1,), generator=rng).item())
 
-        region = torch.arange(start + inject_pos, start + inject_pos + attack_len)
-        window_labels = self.hensel_data.token_labels[region]
-        majority_label = int(window_labels.mode().values.item())
-        candidate_idx = (self.hensel_data.token_labels != majority_label).nonzero(as_tuple=True)[0]
-        if candidate_idx.numel() == 0:
-            warnings.warn(
-                f"_inject_attack: no cross-class tokens found for majority_label={majority_label}. "
-                "Returning unmodified window — this sample will be mislabeled as an attack. "
-                "Consider increasing classes or tokens_per_class.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        for _ in range(8):
+            attack_len = int(torch.randint(self.cfg.attack_min_len, eff_max + 1, (1,), generator=rng).item())
+            inject_pos = int(torch.randint(0, window - attack_len + 1, (1,), generator=rng).item())
+
+            region = torch.arange(start + inject_pos, start + inject_pos + attack_len)
+            window_labels = self.hensel_data.token_labels[region]
+            majority_label = int(window_labels.mode().values.item())
+            candidate_idx = (self.hensel_data.token_labels != majority_label).nonzero(as_tuple=True)[0]
+            if candidate_idx.numel() == 0:
+                warnings.warn(
+                    f"_inject_attack: no cross-class tokens found for majority_label={majority_label}. "
+                    "Returning unmodified window — this sample will be mislabeled as an attack. "
+                    "Consider increasing classes or tokens_per_class.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return base
+
+            sample_ids = torch.randint(0, candidate_idx.numel(), (attack_len,), generator=rng)
+            chosen = candidate_idx[sample_ids]
+            before = base[inject_pos : inject_pos + attack_len].clone()
+            replacement = self.hensel_data.token_digits[chosen].clone()
+            if torch.equal(replacement, before):
+                continue
+            base[inject_pos : inject_pos + attack_len] = replacement
             return base
 
-        sample_ids = torch.randint(0, candidate_idx.numel(), (attack_len,), generator=rng)
-        chosen = candidate_idx[sample_ids]
-        base[inject_pos : inject_pos + attack_len] = self.hensel_data.token_digits[chosen].clone()
+        warnings.warn(
+            "_inject_attack: failed to generate a non-trivial synthetic attack after several attempts. "
+            "Returning the original window.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return base
 
     def __len__(self) -> int:

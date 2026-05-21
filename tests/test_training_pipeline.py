@@ -71,7 +71,7 @@ class TestPadicAnomalyDetector(unittest.TestCase):
         digits = torch.randint(0, 3, (4, 10, 8))
         logits, features = model.forward_with_features(digits)
         self.assertEqual(logits.shape, (4,))
-        self.assertEqual(features.shape, (4, 32))
+        self.assertEqual(features.shape, (4, 64))
 
 
 class TestSyscallAnomalyDataset(unittest.TestCase):
@@ -300,6 +300,64 @@ class TestTrainingSmoke(unittest.TestCase):
         window, label = ds[0]
         self.assertEqual(window.shape, (8, 8))
         self.assertIn(float(label), (0.0, 1.0))
+
+    def test_realistic_cross_class_excludes_idle_tokens(self) -> None:
+        from padic_transformer.dataset_realistic import _attack_cross_class
+
+        base = torch.tensor([[1, 1], [1, 2]], dtype=torch.int64)
+        token_digits = torch.tensor([[0, 0], [2, 2], [2, 1]], dtype=torch.int64)
+        token_labels = torch.tensor([-1, 1, 2], dtype=torch.int64)
+        attacked = _attack_cross_class(
+            base.clone(),
+            inject_pos=0,
+            attack_len=1,
+            token_digits=token_digits,
+            token_labels=token_labels,
+            majority_label=0,
+            rng=torch.Generator().manual_seed(0),
+        )
+        self.assertFalse(torch.equal(attacked[0], torch.zeros(2, dtype=torch.int64)))
+
+    def test_realistic_stuck_at_excludes_idle_tokens(self) -> None:
+        from padic_transformer.dataset_realistic import _attack_stuck_at
+
+        base = torch.tensor([[1, 1], [1, 2]], dtype=torch.int64)
+        token_digits = torch.tensor([[0, 0], [2, 2], [2, 1]], dtype=torch.int64)
+        token_labels = torch.tensor([-1, 1, 2], dtype=torch.int64)
+        attacked = _attack_stuck_at(
+            base.clone(),
+            inject_pos=0,
+            attack_len=2,
+            token_digits=token_digits,
+            token_labels=token_labels,
+            rng=torch.Generator().manual_seed(0),
+        )
+        self.assertFalse(torch.equal(attacked[0], torch.zeros(2, dtype=torch.int64)))
+        self.assertFalse(torch.equal(attacked[1], torch.zeros(2, dtype=torch.int64)))
+
+    def test_realistic_ordering_retries_identity_permutation(self) -> None:
+        from padic_transformer.dataset_realistic import _attack_ordering
+
+        base = torch.tensor([[1, 0], [2, 0], [3, 0]], dtype=torch.int64)
+        perms = iter(
+            [
+                torch.tensor([0, 1, 2], dtype=torch.int64),
+                torch.tensor([2, 1, 0], dtype=torch.int64),
+            ]
+        )
+
+        def fake_randperm(*args, **kwargs):
+            return next(perms)
+
+        with patch("torch.randperm", side_effect=fake_randperm):
+            attacked = _attack_ordering(
+                base.clone(),
+                inject_pos=0,
+                attack_len=3,
+                rng=torch.Generator(),
+            )
+
+        self.assertFalse(torch.equal(attacked, base))
 
     def test_temperature_helpers_smoke(self) -> None:
         from padic_transformer.model_fixes import (

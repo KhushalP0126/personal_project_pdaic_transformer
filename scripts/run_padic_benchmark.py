@@ -103,6 +103,11 @@ def average_window_distance(windows: torch.Tensor, p: int) -> float:
 class SweepResult:
     p: int
     attention_sparsity_pct: float
+    padic_attention_corr: float
+    same_cluster_attention: float
+    diff_cluster_attention: float
+    hierarchy_gap: float
+    padic_gate: float
     normal_d_p: float
     anomaly_d_p: float
     latency_ms: float
@@ -113,9 +118,12 @@ def _write_sweep_markdown(path: Path, report: dict[str, object]) -> None:
     rows = []
     for item in report["runs"]:
         rows.append(
-            "| {p} | {sparsity:.4f}% | {normal_dp:.6f} | {anomaly_dp:.6f} | {latency:.3f} |".format(
+            "| {p} | {sparsity:.4f}% | {corr:.4f} | {gap:.6f} | {gate:.4f} | {normal_dp:.6f} | {anomaly_dp:.6f} | {latency:.3f} |".format(
                 p=item["p"],
                 sparsity=item["attention_sparsity_pct"],
+                corr=item["padic_attention_corr"],
+                gap=item["hierarchy_gap"],
+                gate=item["padic_gate"],
                 normal_dp=item["normal_d_p"],
                 anomaly_dp=item["anomaly_d_p"],
                 latency=item["latency_ms"],
@@ -132,11 +140,12 @@ def _write_sweep_markdown(path: Path, report: dict[str, object]) -> None:
             f"- Batches per p: `{report['batches_per_p']}`",
             f"- Batch size: `{report['batch_size']}`",
             "",
-            "| p | Attention Sparsity | normal d_p | anomaly d_p | forward latency |",
-            "|---:|---:|---:|---:|---:|",
+            "| p | Attention Sparsity | hierarchy corr | hierarchy gap | p-adic gate | normal d_p | anomaly d_p | forward latency |",
+            "|---:|---:|---:|---:|---:|---:|---:|---:|",
             *rows,
             "",
             "Attention sparsity is the percentage of attention weights below `1e-4`.",
+            "Hierarchy correlation is the correlation between attention weights and hard shared-prefix length on non-diagonal valid token pairs.",
             "The p-adic distance uses `d_p(x, y) = p^{-v_p(x-y)}` averaged over non-diagonal token pairs.",
             "",
         ]
@@ -209,6 +218,11 @@ def sweep_p_bases(
         normal_distances = []
         anomaly_distances = []
         sparsities = []
+        hierarchy_corrs = []
+        same_cluster_attn = []
+        diff_cluster_attn = []
+        hierarchy_gaps = []
+        padic_gates = []
         latencies = []
 
         with torch.no_grad():
@@ -225,6 +239,11 @@ def sweep_p_bases(
                 synchronize_if_needed(device)
                 latencies.append(time.perf_counter() - start)
                 sparsities.append(float(metrics["attention_sparsity"].item()))
+                hierarchy_corrs.append(float(metrics["padic_attention_corr"].item()))
+                same_cluster_attn.append(float(metrics["same_cluster_attention"].item()))
+                diff_cluster_attn.append(float(metrics["diff_cluster_attention"].item()))
+                hierarchy_gaps.append(float(metrics["hierarchy_gap"].item()))
+                padic_gates.append(float(metrics["padic_gate"].item()))
 
                 normal_mask = labels == 0
                 anomaly_mask = labels == 1
@@ -236,6 +255,11 @@ def sweep_p_bases(
         result = SweepResult(
             p=p,
             attention_sparsity_pct=100.0 * sum(sparsities) / max(1, len(sparsities)),
+            padic_attention_corr=sum(hierarchy_corrs) / max(1, len(hierarchy_corrs)),
+            same_cluster_attention=sum(same_cluster_attn) / max(1, len(same_cluster_attn)),
+            diff_cluster_attention=sum(diff_cluster_attn) / max(1, len(diff_cluster_attn)),
+            hierarchy_gap=sum(hierarchy_gaps) / max(1, len(hierarchy_gaps)),
+            padic_gate=sum(padic_gates) / max(1, len(padic_gates)),
             normal_d_p=sum(normal_distances) / max(1, len(normal_distances)),
             anomaly_d_p=sum(anomaly_distances) / max(1, len(anomaly_distances)),
             latency_ms=1000.0 * sum(latencies) / max(1, len(latencies)),

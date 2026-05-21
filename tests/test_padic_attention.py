@@ -48,6 +48,24 @@ class TestPadicAttentionHead(unittest.TestCase):
         out, _ = head(digits, x, key_padding_mask=mask)
         torch.testing.assert_close(out[:, -1], torch.zeros_like(out[:, -1]), atol=1e-6, rtol=0.0)
 
+    def test_metrics_include_hierarchy_signals(self) -> None:
+        head = PadicAttentionHead(p=3, r=8, d_model=32, d_head=16, d_digit=8)
+        digits = torch.randint(0, 3, (2, 5, 8))
+        x = torch.randn(2, 5, 32)
+        _, _, metrics = head(digits, x, return_metrics=True)
+        for key in (
+            "attention_sparsity",
+            "padic_attention_corr",
+            "same_cluster_attention",
+            "diff_cluster_attention",
+            "hierarchy_gap",
+            "padic_gate",
+        ):
+            self.assertIn(key, metrics)
+        gate = float(metrics["padic_gate"].item())
+        self.assertGreaterEqual(gate, 0.0)
+        self.assertLessEqual(gate, 1.0)
+
 
 class TestPadicMultiHeadAttention(unittest.TestCase):
     def test_output_shape(self) -> None:
@@ -92,7 +110,15 @@ class TestPadicAttentionAnomalyDetector(unittest.TestCase):
         logits, attn, metrics = model.forward_with_attention(digits, return_metrics=True)
         self.assertEqual(logits.shape, (2,))
         self.assertEqual(len(attn), 2)
-        self.assertIn("attention_sparsity", metrics)
+        for key in (
+            "attention_sparsity",
+            "padic_attention_corr",
+            "same_cluster_attention",
+            "diff_cluster_attention",
+            "hierarchy_gap",
+            "padic_gate",
+        ):
+            self.assertIn(key, metrics)
         sparsity = float(metrics["attention_sparsity"].item())
         self.assertGreaterEqual(sparsity, 0.0)
         self.assertLessEqual(sparsity, 1.0)
@@ -111,7 +137,7 @@ class TestPadicAttentionAnomalyDetector(unittest.TestCase):
         digits = torch.randint(0, 3, (2, 5, 8))
         logits, features = model.forward_with_features(digits)
         self.assertEqual(logits.shape, (2,))
-        self.assertEqual(features.shape, (2, 32))
+        self.assertEqual(features.shape, (2, 64))
 
 
 if __name__ == "__main__":
