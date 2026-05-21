@@ -11,6 +11,211 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from .hensel import int64_to_digits
+from .metrics import binary_auroc
+
+
+def _flatten_windows(windows: torch.Tensor) -> torch.Tensor:
+    return windows.reshape(windows.shape[0], -1).to(torch.float32)
+
+
+def _scores_to_f1(scores: torch.Tensor, labels: torch.Tensor, threshold: float) -> float:
+    preds = (scores >= threshold).to(torch.int64)
+    labs = labels.to(torch.int64)
+    tp = int(((preds == 1) & (labs == 1)).sum().item())
+    fp = int(((preds == 1) & (labs == 0)).sum().item())
+    fn = int(((preds == 0) & (labs == 1)).sum().item())
+    precision = tp / max(1, tp + fp)
+    recall = tp / max(1, tp + fn)
+    return 2.0 * precision * recall / max(1e-9, precision + recall)
+
+
+def _token_ids_from_digits(windows: torch.Tensor, p: int) -> torch.Tensor:
+    r = windows.shape[-1]
+    powers = torch.tensor([p**i for i in range(r)], dtype=torch.int64, device=windows.device)
+    return (windows * powers).sum(dim=-1)
+
+
+def _remap_hierarchy_windows(
+    windows: torch.Tensor,
+    p: int,
+    variant: str,
+    seed: int,
+) -> torch.Tensor:
+    if variant == "true":
+        return windows
+    if variant not in {"shuffled", "random"}:
+        raise ValueError(f"unknown hierarchy variant: {variant}")
+
+    ids = _token_ids_from_digits(windows, p)
+    flat_ids = ids.reshape(-1)
+    unique_ids = torch.unique(flat_ids, sorted=True)
+    rng = torch.Generator(device=windows.device)
+    rng.manual_seed(seed)
+
+    if variant == "shuffled":
+        remapped_vocab = unique_ids[torch.randperm(unique_ids.numel(), generator=rng, device=windows.device)]
+    else:
+        random_digits = torch.randint(
+            0,
+            p,
+            (unique_ids.numel(), windows.shape[-1]),
+            dtype=torch.int64,
+            device=windows.device,
+            generator=rng,
+        )
+        remapped_vocab = _token_ids_from_digits(random_digits.unsqueeze(0), p).squeeze(0)
+
+    remap_indices = torch.searchsorted(unique_ids, flat_ids)
+    remapped_ids = remapped_vocab[remap_indices]
+    remapped_digits = int64_to_digits(remapped_ids, p=p, r=windows.shape[-1]).reshape_as(windows)
+    return remapped_digits
+
+
+def remap_hierarchy_windows(
+    windows: torch.Tensor,
+    p: int,
+    variant: str,
+    seed: int,
+) -> torch.Tensor:
+    return _remap_hierarchy_windows(windows, p, variant, seed)
+
+
+def run_majority_baseline(train_labels: torch.Tensor, val_labels: torch.Tensor) -> dict[str, float]:
+    train_pos = float(train_labels.mean().item())
+    majority = 1 if train_pos >= 0.5 else 0
+    preds = torch.full_like(val_labels, float(majority))
+    accuracy = float((preds == val_labels).to(torch.float32).mean().item())
+    f1 = _scores_to_f1(preds, val_labels, threshold=0.5 if majority == 1 else 1.0)
+    return {"auroc": 0.5, "f1": f1, "accuracy": accuracy, "predicted_class": float(majority)}
+
+
+class FlattenClassifier(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int = 0, dropout: float = 0.1) -> None:
+        super().__init__()
+        if hidden_dim > 0:
+            self.net = nn.Sequential(
+                nn.LayerNorm(input_dim),
+                nn.Linear(input_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, 1),
+            )
+        else:
+            self.net = nn.Linear(input_dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x).squeeze(-1)
+
+
+def _train_flatten_baseline(
+    train_windows: torch.Tensor,
+    train_labels: torch.Tensor,
+    val_windows: torch.Tensor,
+    val_labels: torch.Tensor,
+    *,
+    hidden_dim: int,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    pos_weight: float,
+    device: torch.device,
+) -> dict[str, float]:
+    train_x = _flatten_windows(train_windows)
+    val_x = _flatten_windows(val_windows)
+    model = FlattenClassifier(train_x.shape[1], hidden_dim=hidden_dim).to(device)
+    train_ds = TensorDataset(train_x, train_labels)
+    val_ds = TensorDataset(val_x, val_labels)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size * 2, shuffle=False)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
+    best = {"auroc": 0.5, "f1": 0.0}
+    t0 = time.perf_counter()
+
+    for _ in range(epochs):
+        model.train()
+        for x_batch, y_batch in train_loader:
+            x_batch = x_batch.to(device)
+            y_batch = y_batch.to(device)
+            logits = model(x_batch)
+            loss = criterion(logits, y_batch)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        model.eval()
+        all_logits, all_labels = [], []
+        with torch.no_grad():
+            for x_batch, y_batch in val_loader:
+                logits = model(x_batch.to(device))
+                all_logits.append(logits.cpu())
+                all_labels.append(y_batch.cpu())
+        logits_cat = torch.cat(all_logits)
+        labels_cat = torch.cat(all_labels)
+        auroc = binary_auroc(logits_cat, labels_cat)
+        f1 = _scores_to_f1(logits_cat, labels_cat, threshold=0.0)
+        if auroc > best["auroc"]:
+            best = {"auroc": auroc, "f1": f1}
+
+    best["train_time_s"] = time.perf_counter() - t0
+    return best
+
+
+def run_logistic_regression_baseline(
+    train_windows: torch.Tensor,
+    train_labels: torch.Tensor,
+    val_windows: torch.Tensor,
+    val_labels: torch.Tensor,
+    *,
+    epochs: int = 10,
+    batch_size: int = 256,
+    lr: float = 3e-4,
+    pos_weight: float = 1.0,
+    device: torch.device | None = None,
+) -> dict[str, float]:
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return _train_flatten_baseline(
+        train_windows,
+        train_labels,
+        val_windows,
+        val_labels,
+        hidden_dim=0,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        pos_weight=pos_weight,
+        device=device,
+    )
+
+
+def run_mlp_baseline(
+    train_windows: torch.Tensor,
+    train_labels: torch.Tensor,
+    val_windows: torch.Tensor,
+    val_labels: torch.Tensor,
+    *,
+    hidden_dim: int = 256,
+    epochs: int = 10,
+    batch_size: int = 256,
+    lr: float = 3e-4,
+    pos_weight: float = 1.0,
+    device: torch.device | None = None,
+) -> dict[str, float]:
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return _train_flatten_baseline(
+        train_windows,
+        train_labels,
+        val_windows,
+        val_labels,
+        hidden_dim=hidden_dim,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        pos_weight=pos_weight,
+        device=device,
+    )
 
 
 def run_isolation_forest_baseline(
@@ -170,17 +375,211 @@ def run_standard_transformer_baseline(
                 all_logits.append(logits.cpu())
                 all_labels.append(labels_batch.cpu())
         logits_cat = torch.cat(all_logits)
-        labels_cat = torch.cat(all_labels).long()
-        try:
-            from sklearn.metrics import roc_auc_score
-
-            auroc = float(roc_auc_score(labels_cat.numpy(), logits_cat.numpy()))
-        except Exception:
-            auroc = 0.5
+        labels_cat = torch.cat(all_labels)
+        auroc = binary_auroc(logits_cat, labels_cat)
         best_auroc = max(best_auroc, auroc)
 
     elapsed = time.perf_counter() - t0
     return {"auroc": best_auroc, "train_time_s": elapsed}
+
+
+def _train_digit_window_model(
+    model: nn.Module,
+    train_windows: torch.Tensor,
+    train_labels: torch.Tensor,
+    val_windows: torch.Tensor,
+    val_labels: torch.Tensor,
+    *,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    pos_weight: float,
+    device: torch.device,
+) -> dict[str, float]:
+    train_ds = TensorDataset(train_windows, train_labels)
+    val_ds = TensorDataset(val_windows, val_labels)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size * 2, shuffle=False)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
+    best: dict[str, float] = {"auroc": 0.5, "f1": 0.0}
+    t0 = time.perf_counter()
+
+    for _ in range(epochs):
+        model.train()
+        for windows_batch, labels_batch in train_loader:
+            windows_batch = windows_batch.to(device)
+            labels_batch = labels_batch.to(device)
+            logits, _ = model.forward_with_features(windows_batch)
+            loss = criterion(logits, labels_batch)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        model.eval()
+        all_logits, all_labels = [], []
+        metric_sums: dict[str, float] = {}
+        metric_count = 0
+        with torch.no_grad():
+            for windows_batch, labels_batch in val_loader:
+                windows_batch = windows_batch.to(device)
+                logits, _ = model.forward_with_features(windows_batch)
+                all_logits.append(logits.cpu())
+                all_labels.append(labels_batch.cpu())
+                if hasattr(model, "forward_with_attention"):
+                    _, _, attn_metrics = model.forward_with_attention(windows_batch, return_metrics=True)
+                    for key, value in attn_metrics.items():
+                        metric_sums[key] = metric_sums.get(key, 0.0) + float(value.detach().cpu().item())
+                    metric_count += 1
+        logits_cat = torch.cat(all_logits)
+        labels_cat = torch.cat(all_labels)
+        auroc = binary_auroc(logits_cat, labels_cat)
+        f1 = _scores_to_f1(logits_cat, labels_cat, threshold=0.0)
+        if auroc > best["auroc"]:
+            best = {"auroc": auroc, "f1": f1}
+            if metric_count > 0:
+                for key, value in metric_sums.items():
+                    best[key] = value / metric_count
+
+    best["train_time_s"] = time.perf_counter() - t0
+    return best
+
+
+def run_hensel_transformer_baseline(
+    train_windows: torch.Tensor,
+    train_labels: torch.Tensor,
+    val_windows: torch.Tensor,
+    val_labels: torch.Tensor,
+    *,
+    p: int,
+    r: int,
+    d_model: int = 256,
+    n_heads: int = 8,
+    n_layers: int = 4,
+    epochs: int = 10,
+    batch_size: int = 256,
+    lr: float = 3e-4,
+    pos_weight: float = 1.0,
+    device: torch.device | None = None,
+) -> dict[str, float]:
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from .model import PadicAnomalyDetector
+
+    model = PadicAnomalyDetector(
+        p=p,
+        r=r,
+        d_model=d_model,
+        n_heads=n_heads,
+        n_layers=n_layers,
+        ffn_dim=d_model * 4,
+        head_hidden=d_model // 2,
+    )
+    return _train_digit_window_model(
+        model.to(device),
+        train_windows,
+        train_labels,
+        val_windows,
+        val_labels,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        pos_weight=pos_weight,
+        device=device,
+    )
+
+
+def run_padic_attention_baseline(
+    train_windows: torch.Tensor,
+    train_labels: torch.Tensor,
+    val_windows: torch.Tensor,
+    val_labels: torch.Tensor,
+    *,
+    p: int,
+    r: int,
+    hierarchy_variant: str = "true",
+    seed: int = 20260504,
+    d_model: int = 256,
+    n_heads: int = 8,
+    n_layers: int = 4,
+    d_digit: int = 16,
+    epochs: int = 10,
+    batch_size: int = 256,
+    lr: float = 3e-4,
+    pos_weight: float = 1.0,
+    device: torch.device | None = None,
+) -> dict[str, float]:
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from .padic_attention import PadicAttentionAnomalyDetector
+
+    train_variant = _remap_hierarchy_windows(train_windows, p, hierarchy_variant, seed)
+    val_variant = _remap_hierarchy_windows(val_windows, p, hierarchy_variant, seed + 1)
+    model = PadicAttentionAnomalyDetector(
+        p=p,
+        r=r,
+        d_model=d_model,
+        n_heads=n_heads,
+        n_layers=n_layers,
+        ffn_dim=d_model * 4,
+        head_hidden=d_model // 2,
+        d_digit=d_digit,
+    ).to(device)
+    result = _train_digit_window_model(
+        model,
+        train_variant,
+        train_labels,
+        val_variant,
+        val_labels,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        pos_weight=pos_weight,
+        device=device,
+    )
+    result["hierarchy_variant"] = hierarchy_variant
+    return result
+
+
+def evaluate_attention_model(
+    model: nn.Module,
+    windows: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    p: int,
+    hierarchy_variant: str = "true",
+    seed: int = 20260504,
+    batch_size: int = 256,
+    device: torch.device,
+) -> dict[str, float]:
+    model.eval()
+    eval_windows = _remap_hierarchy_windows(windows, p, hierarchy_variant, seed)
+    loader = DataLoader(TensorDataset(eval_windows, labels), batch_size=batch_size, shuffle=False)
+    all_logits, all_labels = [], []
+    metric_sums: dict[str, float] = {}
+    metric_count = 0
+    with torch.no_grad():
+        for windows_batch, labels_batch in loader:
+            windows_batch = windows_batch.to(device)
+            logits, _ = model.forward_with_features(windows_batch)
+            all_logits.append(logits.cpu())
+            all_labels.append(labels_batch.cpu())
+            if hasattr(model, "forward_with_attention"):
+                _, _, attn_metrics = model.forward_with_attention(windows_batch, return_metrics=True)
+                for key, value in attn_metrics.items():
+                    metric_sums[key] = metric_sums.get(key, 0.0) + float(value.detach().cpu().item())
+                metric_count += 1
+    logits_cat = torch.cat(all_logits)
+    labels_cat = torch.cat(all_labels)
+    result = {
+        "auroc": binary_auroc(logits_cat, labels_cat),
+        "f1": _scores_to_f1(logits_cat, labels_cat, threshold=0.0),
+        "hierarchy_variant": hierarchy_variant,
+    }
+    if metric_count > 0:
+        for key, value in metric_sums.items():
+            result[key] = value / metric_count
+    return result
 
 
 DATASET_GUIDE: dict[str, dict[str, str]] = {

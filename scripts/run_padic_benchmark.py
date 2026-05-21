@@ -15,7 +15,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from padic_transformer.config import BenchmarkConfig
+from padic_transformer.baselines_and_validation import evaluate_attention_model
 from padic_transformer.dataset import AnomalyDatasetConfig, SyscallAnomalyDataset
+from padic_transformer.dataset_hierarchy_rules import HierarchyRuleDataset, HierarchyRuleDatasetConfig
+from padic_transformer.dataset_realistic import RealisticBusDataset, RealisticDatasetConfig
 from padic_transformer.hensel import digits_to_int64, int64_to_digits
 from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
 from padic_transformer.ultrametric import (
@@ -42,6 +45,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sweep-attack-max-len", type=int, default=8)
     parser.add_argument("--sweep-batch-size", type=int, default=64)
     parser.add_argument("--sweep-batches", type=int, default=4)
+    parser.add_argument("--trained-eval-checkpoint", default="")
+    parser.add_argument("--trained-eval-output-json", default="results/trained_attention_eval.json")
+    parser.add_argument("--trained-eval-output-md", default="results/trained_attention_eval.md")
+    parser.add_argument("--trained-eval-dataset", choices=["synthetic", "hierarchy_rules", "realistic"], default="synthetic")
+    parser.add_argument("--trained-eval-samples", type=int, default=4096)
+    parser.add_argument("--trained-eval-window-size", type=int, default=32)
+    parser.add_argument("--trained-eval-attack-fraction", type=float, default=0.3)
+    parser.add_argument("--trained-eval-idle-fraction", type=float, default=0.70)
+    parser.add_argument("--trained-eval-subtree-depth", type=int, default=2)
+    parser.add_argument("--trained-eval-stay-steps", type=int, default=4)
+    parser.add_argument("--trained-eval-attack-tokens", type=int, default=1)
+    parser.add_argument("--trained-eval-batch-size", type=int, default=256)
     parser.add_argument("--p-list", nargs="+", type=int, default=[3, 5])
     parser.add_argument("--r-list", nargs="+", type=int, default=[8, 16])
     parser.add_argument("--samples", type=int, default=4096)
@@ -410,10 +425,134 @@ def write_markdown(path: Path, report: dict[str, object]) -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def write_trained_eval_markdown(path: Path, report: dict[str, object]) -> None:
+    rows = []
+    for name, item in report["variants"].items():
+        rows.append(
+            "| {name} | {auroc:.4f} | {f1:.4f} | {corr:.4f} | {gap:.4f} | {gate:.4f} |".format(
+                name=name,
+                auroc=item["auroc"],
+                f1=item["f1"],
+                corr=item.get("padic_attention_corr", float("nan")),
+                gap=item.get("hierarchy_gap", float("nan")),
+                gate=item.get("padic_gate", float("nan")),
+            )
+        )
+    body = "\n".join(
+        [
+            "# Trained Attention Evaluation",
+            "",
+            f"- Checkpoint: `{report['checkpoint']}`",
+            f"- Dataset: `{report['dataset']}`",
+            f"- Device: `{report['device']}`",
+            "",
+            "| Variant | AUROC | F1 | hierarchy corr | hierarchy gap | p-adic gate |",
+            "|---|---:|---:|---:|---:|---:|",
+            *rows,
+            "",
+        ]
+    )
+    path.write_text(body, encoding="utf-8")
+
+
+def _build_trained_eval_dataset(args: argparse.Namespace, ckpt_config: dict[str, object]) -> tuple[torch.Tensor, torch.Tensor, int]:
+    p = int(ckpt_config["p"])
+    r = int(ckpt_config["r"])
+    benchmark_cfg = BenchmarkConfig(
+        p=p,
+        r=r,
+        samples=args.samples,
+        classes=int(ckpt_config.get("classes", args.classes)),
+        tokens_per_class=int(ckpt_config.get("tokens_per_class", args.tokens_per_class)),
+        seed=int(ckpt_config.get("seed", args.seed)) + 999_999,
+    )
+    hensel = generate_clustered_hensel_dataset(benchmark_cfg, device="cpu")
+    window_size = int(ckpt_config.get("window_size", args.trained_eval_window_size))
+    if args.trained_eval_dataset == "hierarchy_rules":
+        rule_cfg = HierarchyRuleDatasetConfig(
+            window_size=window_size,
+            attack_fraction=args.trained_eval_attack_fraction,
+            subtree_depth=args.trained_eval_subtree_depth,
+            stay_steps=args.trained_eval_stay_steps,
+            attack_tokens=args.trained_eval_attack_tokens,
+            seed=int(ckpt_config.get("seed", args.seed)) ^ 0x51A7,
+        )
+        ds = HierarchyRuleDataset(hensel, rule_cfg, n_samples=args.trained_eval_samples)
+    elif args.trained_eval_dataset == "realistic":
+        realistic_cfg = RealisticDatasetConfig(
+            window_size=window_size,
+            attack_fraction=args.trained_eval_attack_fraction,
+            idle_fraction=args.trained_eval_idle_fraction,
+            attack_min_len=int(ckpt_config.get("attack_min_len", 2)),
+            attack_max_len=int(ckpt_config.get("attack_max_len", 8)),
+            seed=int(ckpt_config.get("seed", args.seed)) ^ 0xC0DE,
+        )
+        ds = RealisticBusDataset(hensel, realistic_cfg, n_samples=args.trained_eval_samples)
+    else:
+        anomaly_cfg = AnomalyDatasetConfig(
+            window_size=window_size,
+            attack_fraction=args.trained_eval_attack_fraction,
+            attack_min_len=int(ckpt_config.get("attack_min_len", 2)),
+            attack_max_len=int(ckpt_config.get("attack_max_len", 8)),
+            seed=int(ckpt_config.get("seed", args.seed)) ^ 0xD00D,
+        )
+        ds = SyscallAnomalyDataset(hensel, anomaly_cfg, n_samples=args.trained_eval_samples, device="cpu")
+    return ds.windows, ds.labels, p
+
+
+def evaluate_trained_checkpoint(args: argparse.Namespace, device: torch.device) -> dict[str, object]:
+    ckpt_path = (REPO_ROOT / args.trained_eval_checkpoint).resolve()
+    payload = torch.load(ckpt_path, map_location="cpu")
+    cfg = payload["config"]
+    model = PadicAttentionAnomalyDetector(
+        p=int(cfg["p"]),
+        r=int(cfg["r"]),
+        d_model=int(cfg["d_model"]),
+        n_heads=int(cfg["n_heads"]),
+        n_layers=int(cfg["n_layers"]),
+        ffn_dim=int(cfg["ffn_dim"]),
+        head_hidden=int(cfg["head_hidden"]),
+        d_digit=int(cfg.get("d_digit", 16)),
+        dropout=float(cfg["dropout"]),
+        max_seq_len=int(cfg.get("max_seq_len", 256)),
+    ).to(device)
+    model.load_state_dict(payload["model_state"])
+    windows, labels, p = _build_trained_eval_dataset(args, cfg)
+    variants = {
+        variant: evaluate_attention_model(
+            model,
+            windows,
+            labels,
+            p=p,
+            hierarchy_variant=variant,
+            seed=int(cfg.get("seed", args.seed)),
+            batch_size=args.trained_eval_batch_size,
+            device=device,
+        )
+        for variant in ("true", "shuffled", "random")
+    }
+    return {
+        "checkpoint": str(ckpt_path.relative_to(REPO_ROOT)),
+        "dataset": args.trained_eval_dataset,
+        "device": str(device),
+        "variants": variants,
+    }
+
+
 def main() -> None:
     args = parse_args()
     md_path = safe_results_path(args.output_md)
     device = resolve_device(args.device)
+
+    if args.trained_eval_checkpoint:
+        report = evaluate_trained_checkpoint(args, device)
+        json_path = safe_results_path(args.trained_eval_output_json)
+        md_eval_path = safe_results_path(args.trained_eval_output_md)
+        json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_trained_eval_markdown(md_eval_path, report)
+        print(f"Wrote {json_path.relative_to(REPO_ROOT)}")
+        print(f"Wrote {md_eval_path.relative_to(REPO_ROOT)}")
+        return
 
     if args.sweep_p_bases:
         sweep_p_bases(

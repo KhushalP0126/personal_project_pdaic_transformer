@@ -32,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attack-fraction", type=float, default=0.3)
     parser.add_argument("--attack-min-len", type=int, default=2)
     parser.add_argument("--attack-max-len", type=int, default=8)
+    parser.add_argument("--hierarchy-rule-dataset", action="store_true", help="Use the subtree-stay rule dataset path")
+    parser.add_argument("--rule-subtree-depth", type=int, default=2)
+    parser.add_argument("--rule-stay-steps", type=int, default=4)
+    parser.add_argument("--rule-attack-tokens", type=int, default=1)
     parser.add_argument("--realistic-dataset", action="store_true", help="Use the realistic bus-trace dataset path")
     parser.add_argument("--realistic-attack-fraction", type=float, default=0.005)
     parser.add_argument("--idle-fraction", type=float, default=0.70)
@@ -81,11 +85,16 @@ def main() -> None:
         n_layers=args.n_layers,
         ffn_dim=args.ffn_dim,
         head_hidden=args.head_hidden,
+        d_digit=args.d_digit,
         dropout=args.dropout,
         window_size=args.window_size,
         attack_fraction=args.attack_fraction,
         attack_min_len=args.attack_min_len,
         attack_max_len=args.attack_max_len,
+        hierarchy_rule_dataset=args.hierarchy_rule_dataset,
+        rule_subtree_depth=args.rule_subtree_depth,
+        rule_stay_steps=args.rule_stay_steps,
+        rule_attack_tokens=args.rule_attack_tokens,
         realistic_dataset=args.realistic_dataset,
         realistic_attack_fraction=args.realistic_attack_fraction,
         idle_fraction=args.idle_fraction,
@@ -127,7 +136,7 @@ def main() -> None:
                 n_layers=cfg.n_layers,
                 ffn_dim=cfg.ffn_dim,
                 head_hidden=cfg.head_hidden,
-                d_digit=args.d_digit,
+                d_digit=cfg.d_digit,
                 dropout=cfg.dropout,
                 max_seq_len=cfg.max_seq_len,
             )

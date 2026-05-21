@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from .metrics import binary_auroc
 from .model_fixes import compute_diversity_regularization, log_temperature_health
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -77,7 +78,6 @@ def _search_threshold_metrics(
 
 
 def _compute_metrics(all_logits: torch.Tensor, all_labels: torch.Tensor, threshold: float = 0.0) -> dict[str, float]:
-    probs = torch.sigmoid(all_logits)
     preds = (all_logits >= threshold).long()
     labs = all_labels.long()
 
@@ -91,16 +91,7 @@ def _compute_metrics(all_logits: torch.Tensor, all_labels: torch.Tensor, thresho
     recall = tp / max(1, tp + fn)
     f1 = 2 * precision * recall / max(1e-9, precision + recall)
 
-    thresholds = torch.linspace(probs.min().item(), probs.max().item(), steps=200)
-    tprs, fprs = [], []
-    for t in thresholds:
-        p = (probs >= t).long()
-        tprs.append(int(((p == 1) & (labs == 1)).sum()) / max(1, int((labs == 1).sum())))
-        fprs.append(int(((p == 1) & (labs == 0)).sum()) / max(1, int((labs == 0).sum())))
-    tprs_t = torch.tensor(tprs)
-    fprs_t = torch.tensor(fprs)
-    sorted_idx = torch.argsort(fprs_t)
-    auroc = float(torch.trapezoid(tprs_t[sorted_idx], fprs_t[sorted_idx]).abs())
+    auroc = binary_auroc(all_logits, labs)
 
     return {
         "accuracy": accuracy,
@@ -134,12 +125,17 @@ class TrainConfig:
     n_layers: int = 4
     ffn_dim: int = 1024
     head_hidden: int = 128
+    d_digit: int = 16
     dropout: float = 0.1
 
     window_size: int = 32
     attack_fraction: float = 0.3
     attack_min_len: int = 2
     attack_max_len: int = 8
+    hierarchy_rule_dataset: bool = False
+    rule_subtree_depth: int = 2
+    rule_stay_steps: int = 4
+    rule_attack_tokens: int = 1
     realistic_dataset: bool = False
     realistic_attack_fraction: float = 0.005
     idle_fraction: float = 0.70
@@ -256,6 +252,8 @@ def _val_epoch(
     n_batches = 0
     all_logits: list[torch.Tensor] = []
     all_labels: list[torch.Tensor] = []
+    attn_metric_sums: dict[str, float] = {}
+    attn_metric_count = 0
 
     for digits, labels in loader:
         digits = digits.to(device, non_blocking=True)
@@ -273,6 +271,16 @@ def _val_epoch(
         n_batches += 1
         all_logits.append(logits.cpu())
         all_labels.append(labels.cpu())
+        if hasattr(model, "forward_with_attention"):
+            with torch.amp.autocast(
+                device_type=device.type,
+                dtype=amp_dtype,
+                enabled=(amp_dtype != torch.float32),
+            ):
+                _, _, attn_metrics = model.forward_with_attention(digits, return_metrics=True)
+            for key, value in attn_metrics.items():
+                attn_metric_sums[key] = attn_metric_sums.get(key, 0.0) + float(value.detach().cpu().item())
+            attn_metric_count += 1
 
     logits_cat = torch.cat(all_logits)
     labels_cat = torch.cat(all_labels)
@@ -296,6 +304,9 @@ def _val_epoch(
     metrics["best_fpr"] = threshold_metrics["fpr"]
     metrics["best_threshold"] = threshold_metrics["threshold"]
     metrics.update(score_stats)
+    if attn_metric_count > 0:
+        for key, value in attn_metric_sums.items():
+            metrics[key] = value / attn_metric_count
     metrics["loss"] = total_loss / max(1, n_batches)
     metrics["bce"] = total_bce / max(1, n_batches)
     metrics["contrastive"] = total_ctr / max(1, n_batches)
@@ -356,6 +367,7 @@ def train(
 ) -> dict[str, object]:
     from .config import BenchmarkConfig
     from .dataset import AnomalyDatasetConfig, build_dataloaders
+    from .dataset_hierarchy_rules import HierarchyRuleDataset, HierarchyRuleDatasetConfig
     from .dataset_realistic import RealisticBusDataset, RealisticDatasetConfig, make_weighted_loss
     from .losses import AnomalyLoss
     from .model import PadicAnomalyDetector
@@ -389,7 +401,60 @@ def train(
         seed=config.seed,
     )
     print("Building dataloaders...")
-    if config.realistic_dataset:
+    if config.hierarchy_rule_dataset:
+        train_hensel = generate_clustered_hensel_dataset(benchmark_cfg, device="cpu")
+        val_cfg = BenchmarkConfig(
+            p=config.p,
+            r=config.r,
+            samples=config.samples,
+            classes=config.classes,
+            tokens_per_class=config.tokens_per_class,
+            seed=config.seed + 999_999,
+            triplets=benchmark_cfg.triplets,
+            distance_pairs=benchmark_cfg.distance_pairs,
+        )
+        val_hensel = generate_clustered_hensel_dataset(val_cfg, device="cpu")
+        rule_cfg = HierarchyRuleDatasetConfig(
+            window_size=config.window_size,
+            attack_fraction=config.attack_fraction,
+            subtree_depth=config.rule_subtree_depth,
+            stay_steps=config.rule_stay_steps,
+            attack_tokens=config.rule_attack_tokens,
+            seed=config.seed,
+        )
+        train_ds = HierarchyRuleDataset(train_hensel, rule_cfg, n_samples=config.n_train)
+        val_ds = HierarchyRuleDataset(
+            val_hensel,
+            HierarchyRuleDatasetConfig(
+                window_size=config.window_size,
+                attack_fraction=config.attack_fraction,
+                subtree_depth=config.rule_subtree_depth,
+                stay_steps=config.rule_stay_steps,
+                attack_tokens=config.rule_attack_tokens,
+                seed=config.seed ^ 0xA11CE,
+            ),
+            n_samples=config.n_val,
+        )
+        pin = device.type == "cuda"
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=config.num_workers,
+            pin_memory=pin,
+            persistent_workers=(config.num_workers > 0),
+            drop_last=True,
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=config.batch_size * 2,
+            shuffle=False,
+            num_workers=config.num_workers,
+            pin_memory=pin,
+            persistent_workers=(config.num_workers > 0),
+            drop_last=False,
+        )
+    elif config.realistic_dataset:
         train_hensel = generate_clustered_hensel_dataset(benchmark_cfg, device="cpu")
         val_cfg = BenchmarkConfig(
             p=config.p,
@@ -523,6 +588,12 @@ def train(
 
         elapsed = time.perf_counter() - t0
         lr_now = scheduler.get_last_lr()[0]
+        attn_suffix = ""
+        if "hierarchy_gap" in val_metrics and "padic_gate" in val_metrics:
+            attn_suffix = (
+                f"hgap={val_metrics['hierarchy_gap']:.4f}  "
+                f"gate={val_metrics['padic_gate']:.4f}  "
+            )
 
         epoch_record = {
             "epoch": epoch,
@@ -542,6 +613,7 @@ def train(
             f"best_f1(anomaly)={val_metrics['best_f1']:.4f}  "
             f"auroc={val_metrics['auroc']:.4f}  "
             f"gap={val_metrics['score_gap']:.4f}  "
+            f"{attn_suffix}"
             f"[{elapsed:.1f}s]"
         )
 

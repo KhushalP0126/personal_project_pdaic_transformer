@@ -16,7 +16,9 @@ if str(SRC_ROOT) not in sys.path:
 
 from padic_transformer.config import BenchmarkConfig
 from padic_transformer.dataset import AnomalyDatasetConfig, SyscallAnomalyDataset, build_dataloaders
+from padic_transformer.dataset_hierarchy_rules import HierarchyRuleDataset, HierarchyRuleDatasetConfig
 from padic_transformer.losses import AnomalyLoss, PadicContrastiveLoss
+from padic_transformer.metrics import binary_auroc
 from padic_transformer.model import HenselEmbedding, PadicAnomalyDetector
 from padic_transformer.training import TrainConfig, train
 from padic_transformer.ultrametric import generate_clustered_hensel_dataset
@@ -168,6 +170,26 @@ class TestSyscallAnomalyDataset(unittest.TestCase):
         self.assertEqual(labels.shape, (16,))
 
 
+class TestHierarchyRuleDataset(unittest.TestCase):
+    def test_dataset_builds_and_shapes(self) -> None:
+        hensel = generate_clustered_hensel_dataset(
+            BenchmarkConfig(p=3, r=8, samples=256, classes=4, tokens_per_class=64, seed=9)
+        )
+        cfg = HierarchyRuleDatasetConfig(
+            window_size=8,
+            attack_fraction=0.25,
+            subtree_depth=2,
+            stay_steps=4,
+            attack_tokens=1,
+            seed=10,
+        )
+        ds = HierarchyRuleDataset(hensel, cfg, n_samples=40)
+        self.assertEqual(len(ds), 40)
+        window, label = ds[0]
+        self.assertEqual(window.shape, (8, 8))
+        self.assertIn(float(label), (0.0, 1.0))
+
+
 class TestLosses(unittest.TestCase):
     def test_contrastive_loss_positive(self) -> None:
         reps = torch.randn(8, 16)
@@ -263,6 +285,38 @@ class TestTrainingSmoke(unittest.TestCase):
         self.assertGreaterEqual(metrics["precision"], 0.0)
         self.assertGreaterEqual(metrics["recall"], 0.0)
         self.assertGreaterEqual(metrics["fpr"], 0.0)
+
+    def test_exact_auroc_handles_ties(self) -> None:
+        scores = torch.tensor([0.2, 0.2, 0.8, 0.8], dtype=torch.float32)
+        labels = torch.tensor([0.0, 1.0, 0.0, 1.0], dtype=torch.float32)
+        self.assertAlmostEqual(binary_auroc(scores, labels), 0.5, places=6)
+
+    def test_val_epoch_collects_attention_metrics(self) -> None:
+        from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
+        from padic_transformer.training import _val_epoch
+
+        model = PadicAttentionAnomalyDetector(
+            p=3,
+            r=8,
+            d_model=32,
+            n_heads=4,
+            n_layers=1,
+            ffn_dim=64,
+            head_hidden=16,
+            d_digit=8,
+        )
+        loss_fn = AnomalyLoss(p=3, alpha=0.0)
+        digits = torch.randint(0, 3, (8, 8, 8))
+        labels = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1], dtype=torch.float32)
+        loader = torch.utils.data.DataLoader(
+            torch.utils.data.TensorDataset(digits, labels),
+            batch_size=4,
+            shuffle=False,
+        )
+        metrics = _val_epoch(model, loader, loss_fn, torch.device("cpu"))
+        self.assertIn("padic_attention_corr", metrics)
+        self.assertIn("hierarchy_gap", metrics)
+        self.assertIn("padic_gate", metrics)
 
     def test_cuda_optimizer_fallback_path_is_supported(self) -> None:
         import torch.optim

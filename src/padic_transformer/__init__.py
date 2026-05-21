@@ -2,6 +2,7 @@
 
 from .config import BenchmarkConfig
 from .dataset import AnomalyDatasetConfig, SyscallAnomalyDataset, build_dataloaders
+from .dataset_hierarchy_rules import HierarchyRuleDataset, HierarchyRuleDatasetConfig
 from .dataset_realistic import RealisticBusDataset, RealisticDatasetConfig, make_weighted_loss
 from .hensel import (
     carry_left_add,
@@ -19,6 +20,7 @@ from .model_fixes import (
     log_temperature_health,
     quantize_dynamic_model,
 )
+from .metrics import binary_auroc
 from .padic_attention import (
     AnomalyHead as PadicAttentionAnomalyHead,
     HenselEmbedding as PadicAttentionHenselEmbedding,
@@ -38,6 +40,9 @@ __all__ = [
     "AnomalyDatasetConfig",
     "AnomalyHead",
     "AnomalyLoss",
+    "binary_auroc",
+    "HierarchyRuleDataset",
+    "HierarchyRuleDatasetConfig",
     "RealisticBusDataset",
     "RealisticDatasetConfig",
     "compute_diversity_regularization",

@@ -13,6 +13,8 @@ from .model_fixes import HenselEmbeddingWithPosition
 
 def _attention_sparsity(weights: torch.Tensor, threshold: float = 1e-4) -> torch.Tensor:
     """Return the fraction of attention weights below `threshold`."""
+    if weights.numel() == 0:
+        return weights.new_tensor(float("nan"))
     return (weights < threshold).to(torch.float32).mean()
 
 
@@ -45,8 +47,8 @@ def _attention_hierarchy_metrics(
     if key_padding_mask is not None:
         valid = ~key_padding_mask
 
-    pair_mask = valid.unsqueeze(2) & valid.unsqueeze(1)
-    pair_mask = pair_mask & ~torch.eye(seq, dtype=torch.bool, device=weights.device).unsqueeze(0)
+    valid_pairs = valid.unsqueeze(2) & valid.unsqueeze(1)
+    pair_mask = valid_pairs & ~torch.eye(seq, dtype=torch.bool, device=weights.device).unsqueeze(0)
 
     same_cluster = pair_mask & (hard_prefix > 0)
     diff_cluster = pair_mask & (hard_prefix == 0)
@@ -67,12 +69,20 @@ def _attention_hierarchy_metrics(
         else:
             corr = (centered_weights @ centered_prefix) / denom
 
-    return {
+    metrics = {
         "padic_attention_corr": corr,
         "same_cluster_attention": same_cluster_attention,
         "diff_cluster_attention": diff_cluster_attention,
         "hierarchy_gap": hierarchy_gap,
     }
+    for depth in (1, 2, 4):
+        same_depth = pair_mask & (hard_prefix >= depth)
+        diff_depth = pair_mask & (hard_prefix < depth)
+        same_depth_attention = _safe_masked_mean(weights, same_depth)
+        diff_depth_attention = _safe_masked_mean(weights, diff_depth)
+        metrics[f"attn_gap_depth{depth}"] = same_depth_attention - diff_depth_attention
+    metrics["attention_sparsity"] = _attention_sparsity(weights.masked_select(valid_pairs))
+    return metrics
 
 
 class SoftPadicValuation(nn.Module):
@@ -183,7 +193,7 @@ class PadicAttentionHead(nn.Module):
         self.logit_scale = nn.Parameter(torch.tensor(5.0))
         self.query_proj = nn.Linear(d_model, d_head)
         self.key_proj = nn.Linear(d_model, d_head)
-        self.padic_gate = nn.Parameter(torch.tensor(0.0))
+        self.padic_gate = nn.Parameter(torch.tensor(-2.0))
         self.value_proj = nn.Linear(d_model, d_head)
         self.dropout = nn.Dropout(dropout)
 
@@ -230,10 +240,7 @@ class PadicAttentionHead(nn.Module):
             out = out * (~key_padding_mask).unsqueeze(-1).to(out.dtype)
         if not return_metrics:
             return out, weights
-        metrics = {
-            "attention_sparsity": _attention_sparsity(weights),
-            "padic_gate": self.padic_gate.sigmoid().detach(),
-        }
+        metrics = {"padic_gate": self.padic_gate.sigmoid().detach()}
         metrics.update(_attention_hierarchy_metrics(weights, digits, key_padding_mask))
         return out, weights, metrics
 
@@ -274,6 +281,9 @@ class PadicMultiHeadAttention(nn.Module):
             "same_cluster_attention": [],
             "diff_cluster_attention": [],
             "hierarchy_gap": [],
+            "attn_gap_depth1": [],
+            "attn_gap_depth2": [],
+            "attn_gap_depth4": [],
             "padic_gate": [],
         }
         for head in self.heads:
@@ -393,6 +403,9 @@ class PadicAttentionEncoder(nn.Module):
             "same_cluster_attention": [],
             "diff_cluster_attention": [],
             "hierarchy_gap": [],
+            "attn_gap_depth1": [],
+            "attn_gap_depth2": [],
+            "attn_gap_depth4": [],
             "padic_gate": [],
         }
         for layer in self.layers:

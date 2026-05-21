@@ -59,12 +59,15 @@ class TestPadicAttentionHead(unittest.TestCase):
             "same_cluster_attention",
             "diff_cluster_attention",
             "hierarchy_gap",
+            "attn_gap_depth1",
+            "attn_gap_depth2",
+            "attn_gap_depth4",
             "padic_gate",
         ):
             self.assertIn(key, metrics)
         gate = float(metrics["padic_gate"].item())
         self.assertGreaterEqual(gate, 0.0)
-        self.assertLessEqual(gate, 1.0)
+        self.assertLess(gate, 0.5)
 
 
 class TestPadicMultiHeadAttention(unittest.TestCase):
@@ -116,6 +119,9 @@ class TestPadicAttentionAnomalyDetector(unittest.TestCase):
             "same_cluster_attention",
             "diff_cluster_attention",
             "hierarchy_gap",
+            "attn_gap_depth1",
+            "attn_gap_depth2",
+            "attn_gap_depth4",
             "padic_gate",
         ):
             self.assertIn(key, metrics)
