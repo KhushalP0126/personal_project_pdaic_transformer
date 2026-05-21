@@ -1,6 +1,6 @@
 # Personal Project: p-adic Transformer
 
-This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-coded token sequences, a transformer encoder, and a binary anomaly head.
+This repo builds a p-adic anomaly detection pipeline around Hensel-coded token sequences, a transformer encoder, and a binary anomaly head. The current attention model is a hybrid design: learned content attention plus a gated p-adic hierarchy bias.
 
 ## Big Picture
 
@@ -14,7 +14,7 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
    It captures closeness by shared low-order digits, not ordinary geometric distance. Two tokens are close if they share a longer Hensel prefix.
 
 4. Why transformer?
-   Your model treats each window as a sequence and uses attention to learn patterns across tokens. This is useful because attacks are sequence-level disruptions, not only single-token anomalies.
+   Your model treats each window as a sequence and uses attention to learn patterns across tokens. In the current attention path, the model combines learned query-key logits with a gated p-adic similarity term, so it can use both learned sequence rules and hierarchy.
 
 5. What counts as a rogue attack right now?
    A synthetic window where a segment of normal tokens is replaced by tokens from another class.
@@ -71,13 +71,13 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
     Each digit position has its own embedding table. The model sums embeddings across the `r` digit positions.
 
 20. What does the transformer learn?
-    It learns sequence patterns over embedded Hensel tokens.
+    It learns sequence patterns over embedded Hensel tokens. In the hybrid attention model, it also learns how strongly to use the p-adic hierarchy via a trainable gate instead of relying on hierarchy alone.
 
 21. What does the anomaly head predict?
     One binary logit per window: normal vs anomalous.
 
 22. Why BCE plus contrastive loss?
-    BCE trains the anomaly label. Contrastive loss encourages p-adic structure to separate normal/attack windows.
+    BCE trains the anomaly label. Contrastive loss encourages p-adic structure to separate normal and attack windows. The recommended workflow is to start with `--alpha 0.0` and confirm BCE can learn ranking first, then reintroduce contrastive loss gradually.
 
 23. What does contrastive loss encourage?
     Pairs with the same label should be closer; pairs with different labels should be farther apart.
@@ -87,20 +87,20 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
 
 ## Results
 
-25. What does AUROC `0.7681` mean?
-    The model has meaningful ranking ability: anomalous windows tend to receive higher anomaly scores than normal windows, but it is not highly reliable yet.
+25. What metric matters most during development?
+    AUROC is the first sanity check because it tells you whether anomalous windows rank above normal windows at all. If AUROC stays near `0.5`, the model is not learning a useful signal regardless of accuracy.
 
-26. Why high accuracy but lower F1?
-    The decision threshold is probably not calibrated well, and the dataset may be class-imbalanced.
+26. Why can accuracy look decent while the detector is still bad?
+    The synthetic dataset is class-imbalanced by design, so majority-class accuracy can look fine even when AUROC is near random. The training code now computes `pos_weight` from the dataset and reports score-gap diagnostics to make this visible.
 
-27. Why best AUROC at epoch 5?
-    After epoch 5, the model kept improving some thresholded metrics, but ranking quality peaked. That suggests possible overfitting or calibration drift.
+27. What extra diagnostics are available now?
+    Validation now logs normal/anomaly score means and the score gap. The attention path also reports hierarchy metrics: p-adic attention correlation, same-cluster attention, different-cluster attention, and hierarchy gap.
 
 28. Is it overfitting?
     Possibly. Training loss steadily decreases while validation loss stays high/noisy.
 
 29. Is the threshold calibrated?
-    No. Your code uses a fixed logit threshold of `0.0`. You should tune the threshold on validation data.
+    The training loop now performs validation threshold search and reports best F1, precision, recall, false-positive rate, and threshold. You still need to choose and lock a deployment threshold explicitly.
 
 30. Which metric matters most?
     For deployment, recall and false-positive rate matter most. AUROC is good for research, but an actual detector needs a chosen alert threshold.
@@ -126,7 +126,7 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
     Your repo already has INT8/2-adic verification code, but the full transformer is not yet hardware-mapped.
 
 37. What should I use for realistic training?
-    Turn on `--realistic-dataset` in `scripts/train_anomaly_detector.py`. That path uses idle-heavy windows, low attack rates, and a frequency-weighted loss. You can also benchmark the trained model with dynamic INT8 quantization from the open-dataset runner.
+    Turn on `--realistic-dataset` in `scripts/train_anomaly_detector.py`. That path uses idle-heavy windows, low attack rates, and a frequency-weighted loss. Attack injection now excludes idle tokens for the relevant attack types and retries no-op mutations instead of silently labeling unchanged windows as attacks.
 
 ## Criticism
 
@@ -134,10 +134,10 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
     Standard transformer without p-adic encoding, LSTM, autoencoder, isolation forest, and random/hash event embeddings.
 
 38. Does p-adic encoding help?
-    Not proven yet. You need ablations comparing p-adic vs non-p-adic encodings.
+    Not proven yet. The current repo is set up to test that question more cleanly than before because the attention model now mixes learned content logits with a gated p-adic term instead of using p-adic similarity alone.
 
 39. What if p-adic structure is randomized?
-    That should be an ablation. If performance stays the same, the p-adic design may not be adding much.
+    That should be an ablation. If AUROC and hierarchy metrics stay similar after shuffling hierarchy, the p-adic design is not carrying the result.
 
 40. Can attackers evade it?
     Yes, likely. Any anomaly detector can be evaded if attackers learn normal-looking patterns.
@@ -167,17 +167,17 @@ This repo builds a synthetic p-adic anomaly detection pipeline around Hensel-cod
 
 ## Final 3 Things To Do
 
-1. Run ablations
+1. Start with BCE-first hybrid attention
 
 ```bash
-python scripts/train_anomaly_detector.py --device cuda --p 7 --r 16 --alpha 0.0 --epochs 10 --n-train 131072 --n-val 16384 --batch-size 768
+make train-attention-bce-gpu
 ```
 
-2. Compare primes
-   Run the same setup for `p=3`, `p=5`, and `p=7`, then compare best AUROC/F1.
+2. Compare primes and hierarchy behavior
+   Run the same setup for `p=3`, `p=5`, and `p=7`, then compare best AUROC/F1 together with hierarchy correlation and hierarchy gap.
 
-3. Tune the threshold
-    Right now F1 depends on a fixed threshold. Add validation threshold search and report best F1, recall, precision, and false-positive rate.
+3. Move to realistic training
+   After BCE-first synthetic training shows separation, run the realistic path and check whether hierarchy metrics remain meaningful.
 
 ## Real Dataset Workflow
 
@@ -224,20 +224,26 @@ This prints dataset size, real attack rate, `pos_weight`, and the ultrametric ve
 If you want to keep the synthetic generator but make it closer to hardware traces:
 
 ```bash
-python scripts/train_anomaly_detector.py --realistic-dataset --realistic-attack-fraction 0.005 --idle-fraction 0.70
+make train-attention-realistic-gpu
 ```
 
 ## Quick Start
 
 ```bash
 make setup
-make train-cpu
+make train-attention-cpu
 ```
 
-For a GPU training run:
+For the recommended GPU experiment path:
 
 ```bash
-make tnorm-gpu
+make train-attention-bce-gpu
+```
+
+For the hierarchy and sparsity sweep:
+
+```bash
+make sweep-p-bases
 ```
 
 For the INT8 2-adic hardware dry-lab:
@@ -260,6 +266,22 @@ Run the standard-library tests:
 make test
 ```
 
+## Current Status
+
+The repo is in a better experimental state than the initial synthetic runs, but it is still not publication-ready.
+
+- The attention model is now hybrid rather than hierarchy-only.
+- Synthetic and realistic attack generation now retry no-op mutations instead of silently introducing label noise.
+- Training reports threshold-search and score-gap diagnostics.
+- The attention path reports hierarchy-alignment metrics directly.
+
+The main open work is still experimental:
+
+- compare against strong non-p-adic baselines
+- run multiple seeds
+- add randomized-hierarchy ablations
+- validate on real datasets with the new metrics
+
 The local reference output is stored in [`results/reference_benchmark.md`](results/reference_benchmark.md).
 
 ## Make Targets
@@ -267,7 +289,7 @@ The local reference output is stored in [`results/reference_benchmark.md`](resul
 - `make open-adfa` downloads and benchmarks ADFA-LD.
 - `make open-beth` downloads and benchmarks BETH.
 - `make open-adfa-stats` prints ADFA-LD stats without training.
-- `make tnorm-gpu` runs the normal GPU training pipeline.
-- `make tnorm-cpu` runs the normal CPU training pipeline.
-- `make train-cpu` remains as an alias for `make tnorm-cpu`.
-- `make train-attention-cpu` runs the attention model smoke test.
+- `make train-attention-bce-gpu` is the recommended first GPU run for the hybrid attention model.
+- `make train-attention-realistic-gpu` runs the realistic idle-heavy training path.
+- `make sweep-p-bases` reports sparsity plus hierarchy-alignment metrics across `p`.
+- `make tnorm-gpu` and `make tnorm-cpu` still run the non-attention baseline path.
