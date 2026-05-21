@@ -9,6 +9,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _attention_sparsity(weights: torch.Tensor, threshold: float = 1e-4) -> torch.Tensor:
+    """Return the fraction of attention weights below `threshold`."""
+    return (weights < threshold).to(torch.float32).mean()
+
+
 class SoftPadicValuation(nn.Module):
     """Differentiable approximation of shared low-order Hensel prefix length."""
 
@@ -96,7 +101,8 @@ class PadicAttentionHead(nn.Module):
         digits: torch.Tensor,
         x: torch.Tensor,
         key_padding_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return_metrics: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         if digits.ndim != 3 or x.ndim != 3:
             raise ValueError("digits and x must be [batch, seq, ...]")
         if digits.shape[:2] != x.shape[:2]:
@@ -126,7 +132,10 @@ class PadicAttentionHead(nn.Module):
         out = self.dropout(out)
         if key_padding_mask is not None:
             out = out * (~key_padding_mask).unsqueeze(-1).to(out.dtype)
-        return out, weights
+        if not return_metrics:
+            return out, weights
+        metrics = {"attention_sparsity": _attention_sparsity(weights)}
+        return out, weights, metrics
 
 
 class PadicMultiHeadAttention(nn.Module):
@@ -155,14 +164,29 @@ class PadicMultiHeadAttention(nn.Module):
         digits: torch.Tensor,
         x: torch.Tensor,
         key_padding_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        return_metrics: bool = False,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]] | tuple[torch.Tensor, list[torch.Tensor], dict[str, torch.Tensor]]:
         outputs = []
         weights = []
+        sparsities = []
         for head in self.heads:
-            out, attn = head(digits, x, key_padding_mask=key_padding_mask)
+            if return_metrics:
+                out, attn, metrics = head(
+                    digits,
+                    x,
+                    key_padding_mask=key_padding_mask,
+                    return_metrics=True,
+                )
+                sparsities.append(metrics["attention_sparsity"])
+            else:
+                out, attn = head(digits, x, key_padding_mask=key_padding_mask)
             outputs.append(out)
             weights.append(attn)
-        return self.out_proj(torch.cat(outputs, dim=-1)), weights
+        out = self.out_proj(torch.cat(outputs, dim=-1))
+        if not return_metrics:
+            return out, weights
+        metrics = {"attention_sparsity": torch.stack(sparsities).mean() if sparsities else out.new_tensor(0.0)}
+        return out, weights, metrics
 
 
 class PadicTransformerLayer(nn.Module):
@@ -193,12 +217,27 @@ class PadicTransformerLayer(nn.Module):
         digits: torch.Tensor,
         x: torch.Tensor,
         src_key_padding_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
-        attn_out, weights = self.self_attn(digits, self.norm1(x), key_padding_mask=src_key_padding_mask)
+        return_metrics: bool = False,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]] | tuple[torch.Tensor, list[torch.Tensor], dict[str, torch.Tensor]]:
+        if return_metrics:
+            attn_out, weights, metrics = self.self_attn(
+                digits,
+                self.norm1(x),
+                key_padding_mask=src_key_padding_mask,
+                return_metrics=True,
+            )
+        else:
+            attn_out, weights = self.self_attn(
+                digits,
+                self.norm1(x),
+                key_padding_mask=src_key_padding_mask,
+            )
         x = x + self.dropout(attn_out)
         x = self.norm2(x)
         x = x + self.dropout(self.ffn(x))
-        return x, weights
+        if not return_metrics:
+            return x, weights
+        return x, weights, metrics
 
 
 class PadicAttentionEncoder(nn.Module):
@@ -234,12 +273,28 @@ class PadicAttentionEncoder(nn.Module):
         digits: torch.Tensor,
         x: torch.Tensor,
         src_key_padding_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, list[list[torch.Tensor]]]:
+        return_metrics: bool = False,
+    ) -> tuple[torch.Tensor, list[list[torch.Tensor]]] | tuple[torch.Tensor, list[list[torch.Tensor]], dict[str, torch.Tensor]]:
         all_weights = []
+        layer_sparsities = []
         for layer in self.layers:
-            x, weights = layer(digits, x, src_key_padding_mask=src_key_padding_mask)
+            if return_metrics:
+                x, weights, metrics = layer(
+                    digits,
+                    x,
+                    src_key_padding_mask=src_key_padding_mask,
+                    return_metrics=True,
+                )
+                layer_sparsities.append(metrics["attention_sparsity"])
+            else:
+                x, weights = layer(digits, x, src_key_padding_mask=src_key_padding_mask)
             all_weights.append(weights)
-        return x, all_weights
+        if not return_metrics:
+            return x, all_weights
+        metrics = {
+            "attention_sparsity": torch.stack(layer_sparsities).mean() if layer_sparsities else x.new_tensor(0.0)
+        }
+        return x, all_weights, metrics
 
 
 class HenselEmbedding(nn.Module):
@@ -329,8 +384,24 @@ class PadicAttentionAnomalyDetector(nn.Module):
         logits, _ = self.forward_with_features(digits, padding_mask=padding_mask)
         return logits
 
-    def forward_with_attention(self, digits: torch.Tensor, padding_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, list[list[torch.Tensor]]]:
+    def forward_with_attention(
+        self,
+        digits: torch.Tensor,
+        padding_mask: torch.Tensor | None = None,
+        return_metrics: bool = False,
+    ) -> (
+        tuple[torch.Tensor, list[list[torch.Tensor]]]
+        | tuple[torch.Tensor, list[list[torch.Tensor]], dict[str, torch.Tensor]]
+    ):
         x = self.embedding(digits)
+        if return_metrics:
+            h, weights, metrics = self.encoder(
+                digits,
+                x,
+                src_key_padding_mask=padding_mask,
+                return_metrics=True,
+            )
+            return self.head(h, padding_mask=padding_mask), weights, metrics
         h, weights = self.encoder(digits, x, src_key_padding_mask=padding_mask)
         return self.head(h, padding_mask=padding_mask), weights
 

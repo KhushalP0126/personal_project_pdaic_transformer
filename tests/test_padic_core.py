@@ -11,7 +11,12 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from padic_transformer.config import BenchmarkConfig, is_prime
-from padic_transformer.hensel import carry_left_add, digits_to_int64, int64_to_digits
+from padic_transformer.hensel import (
+    carry_left_add,
+    digits_to_int64,
+    formal_power_series_coefficients,
+    int64_to_digits,
+)
 from padic_transformer.ultrametric import (
     generate_clustered_hensel_dataset,
     map_raw_indices_excluding_pair,
@@ -49,6 +54,17 @@ class PadicCoreTests(unittest.TestCase):
         digits, overflow = carry_left_add(left, right, p=3)
         torch.testing.assert_close(digits, torch.tensor([[0, 0, 0]], dtype=torch.int64))
         torch.testing.assert_close(overflow, torch.tensor([1], dtype=torch.int64))
+
+    def test_formal_power_series_coefficients_supports_binary_and_odd_primes(self) -> None:
+        left_binary = torch.tensor([[1, 1]], dtype=torch.int64)
+        right_binary = torch.tensor([[1, 0]], dtype=torch.int64)
+        binary = formal_power_series_coefficients(left_binary, right_binary, p=2)
+        torch.testing.assert_close(binary, torch.tensor([[1, 1]], dtype=torch.int64))
+
+        left_odd = torch.tensor([[1, 2]], dtype=torch.int64)
+        right_odd = torch.tensor([[2, 1]], dtype=torch.int64)
+        odd = formal_power_series_coefficients(left_odd, right_odd, p=3)
+        torch.testing.assert_close(odd, torch.tensor([[2, 2]], dtype=torch.int64))
 
     def test_generated_dataset_is_ultrametric(self) -> None:
         config = BenchmarkConfig(

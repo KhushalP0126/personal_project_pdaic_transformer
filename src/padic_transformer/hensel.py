@@ -94,6 +94,39 @@ def carry_left_add(left: torch.Tensor, right: torch.Tensor, p: int) -> tuple[tor
     return out, carry
 
 
+def formal_power_series_coefficients(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    p: int,
+) -> torch.Tensor:
+    """Compute truncated formal-power-series coefficients modulo `p`.
+
+    For `p == 2`, coefficient accumulation uses a fast XOR path because parity
+    and bitwise XOR coincide on binary digits. For `p > 2`, the accumulation
+    falls back to standard modulo arithmetic over `F_p`.
+
+    The result is truncated to the same precision width as the inputs.
+    """
+    a = _require_digit_tensor(left, p)
+    b = _require_digit_tensor(right, p).to(device=a.device, dtype=torch.int64)
+    if a.shape[-1] != b.shape[-1]:
+        raise ValueError("left and right must have the same precision axis")
+
+    a, b = torch.broadcast_tensors(a, b)
+    r = a.shape[-1]
+    coeffs = torch.zeros((*a.shape[:-1], r), dtype=torch.int64, device=a.device)
+    for left_idx in range(r):
+        left_digits = a[..., left_idx]
+        for right_idx in range(r - left_idx):
+            term = (left_digits * b[..., right_idx]).remainder(p)
+            target_idx = left_idx + right_idx
+            if p == 2:
+                coeffs[..., target_idx] = torch.bitwise_xor(coeffs[..., target_idx], term)
+            else:
+                coeffs[..., target_idx] = (coeffs[..., target_idx] + term).remainder(p)
+    return coeffs
+
+
 def shared_prefix_valuation(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
     """Count shared low-order Hensel digits for each pair of rows."""
     a = torch.as_tensor(left)
