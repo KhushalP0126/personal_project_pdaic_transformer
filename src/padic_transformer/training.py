@@ -115,6 +115,16 @@ def _compute_metrics(all_logits: torch.Tensor, all_labels: torch.Tensor, thresho
     }
 
 
+def _dataset_pos_weight(ds) -> float:
+    labels = getattr(ds, "labels", None)
+    if labels is None:
+        return 1.0
+    n_pos = int(labels.sum().item())
+    n_total = int(labels.numel())
+    n_neg = n_total - n_pos
+    return n_neg / max(1, n_pos)
+
+
 @dataclass
 class TrainConfig:
     p: int = 3
@@ -158,7 +168,7 @@ class TrainConfig:
     max_pairs: int = 4096
 
     checkpoint_dir: str = "results/checkpoints"
-    log_json: str = "results/training_log.json"
+    log_json: str | None = "results/training_log.json"
     log_md: str = "results/training_log.md"
     save_every: int = 5
 
@@ -267,6 +277,17 @@ def _val_epoch(
     logits_cat = torch.cat(all_logits)
     labels_cat = torch.cat(all_labels)
     metrics = _compute_metrics(logits_cat, labels_cat)
+    normal_scores = logits_cat[labels_cat.long() == 0]
+    anom_scores = logits_cat[labels_cat.long() == 1]
+    score_stats = {
+        "normal_mean": float(normal_scores.mean().item()) if normal_scores.numel() else float("nan"),
+        "normal_std": float(normal_scores.std().item()) if normal_scores.numel() > 1 else 0.0,
+        "anom_mean": float(anom_scores.mean().item()) if anom_scores.numel() else float("nan"),
+        "anom_std": float(anom_scores.std().item()) if anom_scores.numel() > 1 else 0.0,
+        "score_gap": float(anom_scores.mean().item() - normal_scores.mean().item())
+        if normal_scores.numel() and anom_scores.numel()
+        else float("nan"),
+    }
     threshold_metrics = _search_threshold_metrics(logits_cat, labels_cat)
     metrics["threshold_search"] = threshold_metrics
     metrics["best_f1"] = threshold_metrics["f1"]
@@ -274,6 +295,7 @@ def _val_epoch(
     metrics["best_recall"] = threshold_metrics["recall"]
     metrics["best_fpr"] = threshold_metrics["fpr"]
     metrics["best_threshold"] = threshold_metrics["threshold"]
+    metrics.update(score_stats)
     metrics["loss"] = total_loss / max(1, n_batches)
     metrics["bce"] = total_bce / max(1, n_batches)
     metrics["contrastive"] = total_ctr / max(1, n_batches)
@@ -310,6 +332,23 @@ def _safe_results_path(raw: str) -> Path:
     return path
 
 
+def _make_optimizer(
+    model: nn.Module,
+    device: torch.device,
+    optimizer_kwargs: dict[str, float],
+) -> torch.optim.Optimizer:
+    if device.type == "cuda":
+        try:
+            return torch.optim.AdamW(
+                model.parameters(),
+                fused=True,
+                **optimizer_kwargs,
+            )
+        except (TypeError, RuntimeError):
+            return torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
+    return torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
+
+
 def train(
     config: TrainConfig,
     device: torch.device,
@@ -329,6 +368,10 @@ def train(
     print(f"  p={config.p}  r={config.r}  d_model={config.d_model}")
     print(f"  epochs={config.epochs}  batch={config.batch_size}")
     print(f"{'='*60}\n")
+
+    torch.manual_seed(config.seed)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(config.seed)
 
     benchmark_cfg = BenchmarkConfig(
         p=config.p,
@@ -427,10 +470,12 @@ def train(
             max_pairs=config.max_pairs,
         ).to(device)
     else:
+        pos_weight = _dataset_pos_weight(train_loader.dataset)
+        print(f"synthetic pos_weight={pos_weight:.2f} (n_neg/n_pos)")
         loss_fn = AnomalyLoss(
             p=config.p,
             alpha=config.alpha,
-            pos_weight=config.pos_weight,
+            pos_weight=pos_weight,
             margin_pos=config.margin_pos,
             margin_neg=config.margin_neg,
             max_pairs=config.max_pairs,
@@ -440,17 +485,7 @@ def train(
         "lr": config.learning_rate,
         "weight_decay": config.weight_decay,
     }
-    if device.type == "cuda":
-        try:
-            optimizer = torch.optim.AdamW(
-                model.parameters(),
-                fused=True,
-                **optimizer_kwargs,
-            )
-        except (TypeError, RuntimeError):
-            optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
-    else:
-        optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
+    optimizer = _make_optimizer(model, device, optimizer_kwargs)
     scheduler = _build_scheduler(optimizer, config)
 
     amp_dtype = _amp_dtype(device)
@@ -460,7 +495,7 @@ def train(
         scaler = torch.amp.GradScaler("cuda")
 
     ckpt_dir = _safe_results_path(config.checkpoint_dir)
-    log_json_path = _safe_results_path(config.log_json)
+    log_json_path = _safe_results_path(config.log_json) if config.log_json else None
     log_md_path = _safe_results_path(config.log_md)
 
     history: list[dict] = []
@@ -506,6 +541,7 @@ def train(
             f"acc={val_metrics['accuracy']:.4f}  "
             f"best_f1(anomaly)={val_metrics['best_f1']:.4f}  "
             f"auroc={val_metrics['auroc']:.4f}  "
+            f"gap={val_metrics['score_gap']:.4f}  "
             f"[{elapsed:.1f}s]"
         )
 
@@ -533,12 +569,16 @@ def train(
         "history": history,
     }
 
-    log_json_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    if log_json_path is not None:
+        log_json_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     _write_training_log(log_md_path, config, result, device)
 
     print(f"\nTraining complete in {total_time:.1f}s -- best AUROC {best_auroc:.4f} at epoch {best_epoch}")
-    print(f"Logs: {log_json_path.relative_to(REPO_ROOT)}")
-    print(f"      {log_md_path.relative_to(REPO_ROOT)}")
+    if log_json_path is not None:
+        print(f"Logs: {log_json_path.relative_to(REPO_ROOT)}")
+        print(f"      {log_md_path.relative_to(REPO_ROOT)}")
+    else:
+        print(f"Logs: {log_md_path.relative_to(REPO_ROOT)}")
     return result
 
 
