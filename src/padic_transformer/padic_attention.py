@@ -121,6 +121,8 @@ class PadicAttentionHead(nn.Module):
     ) -> None:
         super().__init__()
         self.valuation = SoftPadicValuation(p=p, r=r, d_digit=d_digit)
+        self.logit_scale = nn.Parameter(torch.tensor(5.0))
+        self.logit_bias = nn.Parameter(torch.tensor(0.0))
         self.value_proj = nn.Linear(d_model, d_head)
         self.dropout = nn.Dropout(dropout)
 
@@ -149,7 +151,9 @@ class PadicAttentionHead(nn.Module):
             .contiguous()
             .reshape(batch * seq, seq, self.valuation.r)
         )
-        logits = self.valuation(flat_a, flat_b).reshape(batch, seq, seq).to(dtype=x.dtype)
+        raw = self.valuation(flat_a, flat_b).reshape(batch, seq, seq).to(dtype=x.dtype)
+        scale = self.logit_scale.clamp(0.1, 25.0)
+        logits = scale * raw + self.logit_bias
 
         if key_padding_mask is not None:
             logits = logits.masked_fill(key_padding_mask.unsqueeze(1), torch.finfo(logits.dtype).min)
@@ -343,9 +347,10 @@ class HenselEmbedding(nn.Module):
 class AnomalyHead(nn.Module):
     def __init__(self, d_model: int, hidden_dim: int, dropout: float = 0.1) -> None:
         super().__init__()
+        self.token_score = nn.Linear(d_model, 1)
         self.net = nn.Sequential(
-            nn.LayerNorm(d_model),
-            nn.Linear(d_model, hidden_dim),
+            nn.LayerNorm(d_model * 2),
+            nn.Linear(d_model * 2, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, 1),
@@ -353,9 +358,16 @@ class AnomalyHead(nn.Module):
 
     def pool_hidden(self, hidden: torch.Tensor, padding_mask: torch.Tensor | None = None) -> torch.Tensor:
         if padding_mask is not None:
-            mask = (~padding_mask).unsqueeze(-1).to(hidden.dtype)
-            return (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
-        return hidden.mean(dim=1)
+            valid = (~padding_mask).unsqueeze(-1).to(hidden.dtype)
+            mean_pool = (hidden * valid).sum(dim=1) / valid.sum(dim=1).clamp(min=1)
+            scores = self.token_score(hidden).masked_fill(padding_mask.unsqueeze(-1), -1e9)
+        else:
+            mean_pool = hidden.mean(dim=1)
+            scores = self.token_score(hidden)
+
+        weights = torch.softmax(scores, dim=1)
+        attn_pool = (weights * hidden).sum(dim=1)
+        return torch.cat([mean_pool, attn_pool], dim=-1)
 
     def forward(self, hidden: torch.Tensor, padding_mask: torch.Tensor | None = None) -> torch.Tensor:
         pooled = self.pool_hidden(hidden, padding_mask=padding_mask)
