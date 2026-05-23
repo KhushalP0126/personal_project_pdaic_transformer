@@ -129,6 +129,28 @@ class TestPadicAttentionAnomalyDetector(unittest.TestCase):
         self.assertGreaterEqual(sparsity, 0.0)
         self.assertLessEqual(sparsity, 1.0)
 
+    def test_forward_with_attention_features(self) -> None:
+        model = PadicAttentionAnomalyDetector(
+            p=3,
+            r=8,
+            d_model=32,
+            n_heads=4,
+            n_layers=2,
+            ffn_dim=64,
+            head_hidden=16,
+            d_digit=8,
+        )
+        digits = torch.randint(0, 3, (2, 5, 8))
+        logits, features, attn, metrics = model.forward_with_attention(
+            digits,
+            return_metrics=True,
+            return_features=True,
+        )
+        self.assertEqual(logits.shape, (2,))
+        self.assertEqual(features.shape, (2, 64))
+        self.assertEqual(len(attn), 2)
+        self.assertIn("hierarchy_gap", metrics)
+
     def test_forward_with_features(self) -> None:
         model = PadicAttentionAnomalyDetector(
             p=3,

@@ -526,9 +526,12 @@ class PadicAttentionAnomalyDetector(nn.Module):
         digits: torch.Tensor,
         padding_mask: torch.Tensor | None = None,
         return_metrics: bool = False,
+        return_features: bool = False,
     ) -> (
         tuple[torch.Tensor, list[list[torch.Tensor]]]
         | tuple[torch.Tensor, list[list[torch.Tensor]], dict[str, torch.Tensor]]
+        | tuple[torch.Tensor, torch.Tensor, list[list[torch.Tensor]]]
+        | tuple[torch.Tensor, torch.Tensor, list[list[torch.Tensor]], dict[str, torch.Tensor]]
     ):
         x = self.embedding(digits)
         if return_metrics:
@@ -538,9 +541,17 @@ class PadicAttentionAnomalyDetector(nn.Module):
                 src_key_padding_mask=padding_mask,
                 return_metrics=True,
             )
-            return self.head(h, padding_mask=padding_mask), weights, metrics
+            pooled = self.head.pool_hidden(h, padding_mask=padding_mask)
+            logits = self.head.net(pooled).squeeze(-1)
+            if return_features:
+                return logits, pooled, weights, metrics
+            return logits, weights, metrics
         h, weights = self.encoder(digits, x, src_key_padding_mask=padding_mask)
-        return self.head(h, padding_mask=padding_mask), weights
+        pooled = self.head.pool_hidden(h, padding_mask=padding_mask)
+        logits = self.head.net(pooled).squeeze(-1)
+        if return_features:
+            return logits, pooled, weights
+        return logits, weights
 
     def count_parameters(self) -> int:
         return sum(param.numel() for param in self.parameters() if param.requires_grad)

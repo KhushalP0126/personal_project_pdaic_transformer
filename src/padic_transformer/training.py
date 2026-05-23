@@ -258,13 +258,26 @@ def _val_epoch(
     for digits, labels in loader:
         digits = digits.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        with torch.amp.autocast(
-            device_type=device.type,
-            dtype=amp_dtype,
-            enabled=(amp_dtype != torch.float32),
-        ):
-            logits, representations = model.forward_with_features(digits)
-            loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
+        if hasattr(model, "forward_with_attention"):
+            with torch.amp.autocast(
+                device_type=device.type,
+                dtype=amp_dtype,
+                enabled=(amp_dtype != torch.float32),
+            ):
+                logits, representations, _, attn_metrics = model.forward_with_attention(
+                    digits,
+                    return_metrics=True,
+                    return_features=True,
+                )
+                loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
+        else:
+            with torch.amp.autocast(
+                device_type=device.type,
+                dtype=amp_dtype,
+                enabled=(amp_dtype != torch.float32),
+            ):
+                logits, representations = model.forward_with_features(digits)
+                loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
         total_loss += float(loss.item())
         total_bce += float(bce_loss.item())
         total_ctr += float(ctr_loss.item())
@@ -272,12 +285,6 @@ def _val_epoch(
         all_logits.append(logits.cpu())
         all_labels.append(labels.cpu())
         if hasattr(model, "forward_with_attention"):
-            with torch.amp.autocast(
-                device_type=device.type,
-                dtype=amp_dtype,
-                enabled=(amp_dtype != torch.float32),
-            ):
-                _, _, attn_metrics = model.forward_with_attention(digits, return_metrics=True)
             for key, value in attn_metrics.items():
                 attn_metric_sums[key] = attn_metric_sums.get(key, 0.0) + float(value.detach().cpu().item())
             attn_metric_count += 1
