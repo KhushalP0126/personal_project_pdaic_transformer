@@ -63,7 +63,7 @@ def _remap_hierarchy_windows(
             device=windows.device,
             generator=rng,
         )
-        remapped_vocab = _token_ids_from_digits(random_digits.unsqueeze(0), p).squeeze(0)
+        remapped_vocab = _token_ids_from_digits(random_digits, p).reshape(unique_ids.numel())
 
     remap_indices = torch.searchsorted(unique_ids, flat_ids)
     remapped_ids = remapped_vocab[remap_indices]
@@ -383,6 +383,21 @@ def run_standard_transformer_baseline(
     return {"auroc": best_auroc, "train_time_s": elapsed}
 
 
+def _eval_digit_window_batch(
+    model: nn.Module,
+    windows_batch: torch.Tensor,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    if hasattr(model, "forward_with_attention"):
+        logits, _, _, attn_metrics = model.forward_with_attention(
+            windows_batch,
+            return_metrics=True,
+            return_features=True,
+        )
+        return logits, attn_metrics
+    logits, _ = model.forward_with_features(windows_batch)
+    return logits, {}
+
+
 def _train_digit_window_model(
     model: nn.Module,
     train_windows: torch.Tensor,
@@ -423,11 +438,10 @@ def _train_digit_window_model(
         with torch.no_grad():
             for windows_batch, labels_batch in val_loader:
                 windows_batch = windows_batch.to(device)
-                logits, _ = model.forward_with_features(windows_batch)
+                logits, attn_metrics = _eval_digit_window_batch(model, windows_batch)
                 all_logits.append(logits.cpu())
                 all_labels.append(labels_batch.cpu())
-                if hasattr(model, "forward_with_attention"):
-                    _, _, attn_metrics = model.forward_with_attention(windows_batch, return_metrics=True)
+                if attn_metrics:
                     for key, value in attn_metrics.items():
                         metric_sums[key] = metric_sums.get(key, 0.0) + float(value.detach().cpu().item())
                     metric_count += 1
@@ -561,11 +575,10 @@ def evaluate_attention_model(
     with torch.no_grad():
         for windows_batch, labels_batch in loader:
             windows_batch = windows_batch.to(device)
-            logits, _ = model.forward_with_features(windows_batch)
+            logits, attn_metrics = _eval_digit_window_batch(model, windows_batch)
             all_logits.append(logits.cpu())
             all_labels.append(labels_batch.cpu())
-            if hasattr(model, "forward_with_attention"):
-                _, _, attn_metrics = model.forward_with_attention(windows_batch, return_metrics=True)
+            if attn_metrics:
                 for key, value in attn_metrics.items():
                     metric_sums[key] = metric_sums.get(key, 0.0) + float(value.detach().cpu().item())
                 metric_count += 1

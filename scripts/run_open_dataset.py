@@ -26,6 +26,7 @@ from padic_transformer.baselines_and_validation import (
     run_standard_transformer_baseline,
 )
 from padic_transformer.hensel import int64_to_digits
+from padic_transformer.metrics import binary_auroc
 from padic_transformer.model import PadicAnomalyDetector
 from padic_transformer.model_fixes import StreamingWindowScorer, quantize_dynamic_model
 from padic_transformer.ultrametric import ultrametric_violation_rate
@@ -402,12 +403,7 @@ def train_and_eval(
 
         logits_cat = torch.cat(all_logits)
         labels_cat = torch.cat(all_labels).long()
-        try:
-            from sklearn.metrics import roc_auc_score
-
-            auroc = float(roc_auc_score(labels_cat.numpy(), logits_cat.numpy()))
-        except Exception:
-            auroc = 0.5
+        auroc = binary_auroc(logits_cat, labels_cat)
         best_auroc = max(best_auroc, auroc)
 
     results["padic_transformer"] = {"auroc": best_auroc, "time_s": time.perf_counter() - t0}

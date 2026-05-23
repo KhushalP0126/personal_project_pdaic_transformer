@@ -291,6 +291,42 @@ class TestTrainingSmoke(unittest.TestCase):
         labels = torch.tensor([0.0, 1.0, 0.0, 1.0], dtype=torch.float32)
         self.assertAlmostEqual(binary_auroc(scores, labels), 0.5, places=6)
 
+    def test_random_hierarchy_remap_handles_single_token_vocab(self) -> None:
+        from padic_transformer.baselines_and_validation import remap_hierarchy_windows
+
+        windows = torch.zeros(2, 3, 4, dtype=torch.int64)
+        remapped = remap_hierarchy_windows(windows, p=3, variant="random", seed=7)
+        self.assertEqual(remapped.shape, windows.shape)
+
+    def test_digit_window_eval_uses_single_attention_forward(self) -> None:
+        from padic_transformer.baselines_and_validation import _eval_digit_window_batch
+
+        class CountingAttentionModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.features_calls = 0
+                self.attention_calls = 0
+
+            def forward_with_features(self, windows):
+                self.features_calls += 1
+                return torch.zeros(windows.shape[0]), torch.zeros(windows.shape[0], 2)
+
+            def forward_with_attention(self, windows, return_metrics=False, return_features=False):
+                self.attention_calls += 1
+                if not return_metrics or not return_features:
+                    raise AssertionError("attention evaluation must request metrics and features")
+                logits = torch.ones(windows.shape[0])
+                features = torch.ones(windows.shape[0], 2)
+                metrics = {"hierarchy_gap": torch.tensor(0.25)}
+                return logits, features, [], metrics
+
+        model = CountingAttentionModel()
+        logits, metrics = _eval_digit_window_batch(model, torch.zeros(3, 4, 2, dtype=torch.int64))
+        self.assertEqual(model.features_calls, 0)
+        self.assertEqual(model.attention_calls, 1)
+        self.assertEqual(logits.shape, (3,))
+        self.assertIn("hierarchy_gap", metrics)
+
     def test_val_epoch_collects_attention_metrics(self) -> None:
         from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
         from padic_transformer.training import _val_epoch
