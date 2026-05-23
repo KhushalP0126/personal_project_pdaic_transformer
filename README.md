@@ -33,8 +33,6 @@ What remains open:
 - stronger real-dataset evidence
 - a tighter paper narrative
 
-The local reference output is stored in [`results/reference_benchmark.md`](results/reference_benchmark.md).
-
 ## What This Repo Is Testing
 
 ### 1. The data hypothesis
