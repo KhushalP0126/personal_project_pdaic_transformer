@@ -233,3 +233,16 @@ make test
 - `make open-adfa` downloads and benchmarks ADFA-LD.
 - `make open-beth` downloads and benchmarks BETH.
 - `make open-adfa-stats` prints ADFA-LD stats without training.
+
+## References
+
+- [Learning with the p-adics](https://arxiv.org/abs/2512.22692) (December 2025)
+  - `Identifier:` arXiv:2512.22692
+  - `Relevance:` This paper establishes the mathematical foundation for applying the non-Archimedean space of $p$-adic numbers ($\mathbb{Q}_p$) to machine learning. It highlights the inherent hierarchical structure of p-adics, which justifies their use for representation learning and anomaly detection in this architecture.
+- [pASCNN: p-adic Sheaf-Coherence Neural Network](https://github.com/kaifczxc-lab/pASCNN) (April 2026)
+  - `Identifier:` GitHub Repository (kaifczxc-lab/pASCNN)
+  - `Relevance:` Explores the implementation of p-adic ultrametrics to structure logical inference in complex spaces. It provides a highly relevant conceptual baseline for substituting standard attention mechanisms with p-adic structured logic.
+- [Attention Is All You Need](https://arxiv.org/abs/1706.03762) (June 2017)
+  - `Authors:` Vaswani, A., et al.
+  - `Identifier:` arXiv:1706.03762
+  - `Relevance:` The foundational paper for the baseline Transformer architecture. It serves as the standard comparative baseline against the custom p-adic modifications introduced in this repository.
