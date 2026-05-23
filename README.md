@@ -8,6 +8,7 @@ If you are new to p-adic numbers and want a visual introduction before reading t
 
 - [YouTube explainer](https://www.youtube.com/watch?v=3gyHKCDq1YA)
 - [YouTube explainer 2](https://www.youtube.com/watch?v=v9QTK7zBAhw)
+- [In-depth p-adic and adic numbers playlist](https://www.youtube.com/playlist?list=PL8I7rVYxS9skcwABs4kBDkJnYExQxZsE_)
 
 ## Hypothesis
 
