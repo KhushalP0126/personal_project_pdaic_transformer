@@ -2,6 +2,13 @@
 
 This repo builds a p-adic anomaly detection pipeline around Hensel-coded token sequences, a transformer encoder, and a binary anomaly head. The current attention model is hybrid: learned content attention plus a gated p-adic hierarchy bias.
 
+## Quick Explainer
+
+If you are new to p-adic numbers and want a visual introduction before reading the rest of the project, start here:
+
+- [YouTube explainer](https://www.youtube.com/watch?v=3gyHKCDq1YA)
+- [YouTube explainer 2](https://www.youtube.com/watch?v=v9QTK7zBAhw)
+
 ## Hypothesis
 
 The central claim is that anomaly detection improves when the model can use both:
