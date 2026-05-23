@@ -258,24 +258,21 @@ def _val_epoch(
     for digits, labels in loader:
         digits = digits.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        if hasattr(model, "forward_with_attention"):
-            with torch.amp.autocast(
-                device_type=device.type,
-                dtype=amp_dtype,
-                enabled=(amp_dtype != torch.float32),
-            ):
+        attn_metrics: dict[str, torch.Tensor] = {}
+        with torch.amp.autocast(
+            device_type=device.type,
+            dtype=amp_dtype,
+            enabled=(amp_dtype != torch.float32),
+        ):
+            # Validation can request attention metrics from the same forward pass.
+            if hasattr(model, "forward_with_attention"):
                 logits, representations, _, attn_metrics = model.forward_with_attention(
                     digits,
                     return_metrics=True,
                     return_features=True,
                 )
                 loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
-        else:
-            with torch.amp.autocast(
-                device_type=device.type,
-                dtype=amp_dtype,
-                enabled=(amp_dtype != torch.float32),
-            ):
+            else:
                 logits, representations = model.forward_with_features(digits)
                 loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
         total_loss += float(loss.item())
@@ -284,7 +281,7 @@ def _val_epoch(
         n_batches += 1
         all_logits.append(logits.cpu())
         all_labels.append(labels.cpu())
-        if hasattr(model, "forward_with_attention"):
+        if attn_metrics:
             for key, value in attn_metrics.items():
                 attn_metric_sums[key] = attn_metric_sums.get(key, 0.0) + float(value.detach().cpu().item())
             attn_metric_count += 1
