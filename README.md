@@ -236,6 +236,8 @@ make test
 - `make vanilla` runs the standard transformer GPU training path without PDAIC attention.
 - `make hierarchy` runs the hierarchy-rule benchmark training path.
 - `make realistic` runs the realistic idle-heavy training path.
+- `make primes` runs vanilla `p=3,5,7` training comparisons.
+- `make pdaic-primes` runs PDAIC attention `p=3,5,7` training comparisons.
 - `make baselines` runs the majority, linear, MLP, transformer, and hierarchy-control baselines.
 - `make eval` evaluates a trained checkpoint against true, shuffled, and random hierarchy controls.
 - `make sweep` reports sparsity plus hierarchy-alignment metrics across `p` on an untrained model.
