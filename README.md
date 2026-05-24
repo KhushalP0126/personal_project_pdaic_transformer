@@ -233,6 +233,7 @@ make test
 - `make cpu` and `make gpu` run the benchmark path, not training.
 - `make smoke` is the local CPU sanity-training path.
 - `make train` is the recommended first GPU run for the hybrid attention model.
+- `make vanilla` runs the standard transformer GPU training path without PDAIC attention.
 - `make hierarchy` runs the hierarchy-rule benchmark training path.
 - `make realistic` runs the realistic idle-heavy training path.
 - `make baselines` runs the majority, linear, MLP, transformer, and hierarchy-control baselines.
