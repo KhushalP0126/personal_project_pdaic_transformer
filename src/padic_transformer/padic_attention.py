@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .model_fixes import HenselEmbeddingWithPosition
+from .model import AnomalyHead, HenselEmbedding
 
 
 def _attention_sparsity(weights: torch.Tensor, threshold: float = 1e-4) -> torch.Tensor:
@@ -428,51 +428,6 @@ class PadicAttentionEncoder(nn.Module):
             for key, values in layer_metrics.items()
         }
         return x, all_weights, metrics
-
-
-class HenselEmbedding(nn.Module):
-    def __init__(self, p: int, r: int, d_model: int, max_seq_len: int = 0, dropout: float = 0.1) -> None:
-        super().__init__()
-        self._impl = HenselEmbeddingWithPosition(
-            p=p,
-            r=r,
-            d_model=d_model,
-            max_seq_len=max_seq_len,
-            dropout=dropout,
-        )
-
-    def forward(self, digits: torch.Tensor) -> torch.Tensor:
-        return self._impl(digits)
-
-
-class AnomalyHead(nn.Module):
-    def __init__(self, d_model: int, hidden_dim: int, dropout: float = 0.1) -> None:
-        super().__init__()
-        self.token_score = nn.Linear(d_model, 1)
-        self.net = nn.Sequential(
-            nn.LayerNorm(d_model * 2),
-            nn.Linear(d_model * 2, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
-        )
-
-    def pool_hidden(self, hidden: torch.Tensor, padding_mask: torch.Tensor | None = None) -> torch.Tensor:
-        if padding_mask is not None:
-            valid = (~padding_mask).unsqueeze(-1).to(hidden.dtype)
-            mean_pool = (hidden * valid).sum(dim=1) / valid.sum(dim=1).clamp(min=1)
-            scores = self.token_score(hidden).masked_fill(padding_mask.unsqueeze(-1), -1e9)
-        else:
-            mean_pool = hidden.mean(dim=1)
-            scores = self.token_score(hidden)
-
-        weights = torch.softmax(scores, dim=1)
-        attn_pool = (weights * hidden).sum(dim=1)
-        return torch.cat([mean_pool, attn_pool], dim=-1)
-
-    def forward(self, hidden: torch.Tensor, padding_mask: torch.Tensor | None = None) -> torch.Tensor:
-        pooled = self.pool_hidden(hidden, padding_mask=padding_mask)
-        return self.net(pooled).squeeze(-1)
 
 
 class PadicAttentionAnomalyDetector(nn.Module):

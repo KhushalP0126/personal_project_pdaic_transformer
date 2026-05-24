@@ -397,13 +397,6 @@ def train(
         tokens_per_class=config.tokens_per_class,
         seed=config.seed,
     )
-    anomaly_cfg = AnomalyDatasetConfig(
-        window_size=config.window_size,
-        attack_fraction=config.attack_fraction,
-        attack_min_len=config.attack_min_len,
-        attack_max_len=config.attack_max_len,
-        seed=config.seed,
-    )
     print("Building dataloaders...")
     if config.hierarchy_rule_dataset:
         train_hensel = generate_clustered_hensel_dataset(benchmark_cfg, device="cpu")
@@ -502,6 +495,13 @@ def train(
             drop_last=False,
         )
     else:
+        anomaly_cfg = AnomalyDatasetConfig(
+            window_size=config.window_size,
+            attack_fraction=config.attack_fraction,
+            attack_min_len=config.attack_min_len,
+            attack_max_len=config.attack_max_len,
+            seed=config.seed,
+        )
         train_loader, val_loader = build_dataloaders(
             benchmark_cfg=benchmark_cfg,
             anomaly_cfg=anomaly_cfg,

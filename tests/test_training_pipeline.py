@@ -306,6 +306,8 @@ class TestTrainingSmoke(unittest.TestCase):
                 super().__init__()
                 self.features_calls = 0
                 self.attention_calls = 0
+                self.requested_metrics = False
+                self.requested_features = False
 
             def forward_with_features(self, windows):
                 self.features_calls += 1
@@ -313,8 +315,8 @@ class TestTrainingSmoke(unittest.TestCase):
 
             def forward_with_attention(self, windows, return_metrics=False, return_features=False):
                 self.attention_calls += 1
-                if not return_metrics or not return_features:
-                    raise AssertionError("attention evaluation must request metrics and features")
+                self.requested_metrics = return_metrics
+                self.requested_features = return_features
                 logits = torch.ones(windows.shape[0])
                 features = torch.ones(windows.shape[0], 2)
                 metrics = {"hierarchy_gap": torch.tensor(0.25)}
@@ -324,6 +326,8 @@ class TestTrainingSmoke(unittest.TestCase):
         logits, metrics = _eval_digit_window_batch(model, torch.zeros(3, 4, 2, dtype=torch.int64))
         self.assertEqual(model.features_calls, 0)
         self.assertEqual(model.attention_calls, 1)
+        self.assertTrue(model.requested_metrics)
+        self.assertTrue(model.requested_features)
         self.assertEqual(logits.shape, (3,))
         self.assertIn("hierarchy_gap", metrics)
 

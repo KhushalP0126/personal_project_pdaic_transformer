@@ -24,12 +24,11 @@ Full sweep entry-point:
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Iterator, Literal
+from typing import Literal
 
 import torch
 import torch.nn as nn

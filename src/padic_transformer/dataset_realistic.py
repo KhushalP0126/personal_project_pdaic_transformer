@@ -28,8 +28,8 @@ class RealisticDatasetConfig:
             raise ValueError(f"window_size must be in [2, 4096], got {self.window_size}")
         if not 0.0 < self.attack_fraction < 0.5:
             raise ValueError(
-                f"attack_fraction={self.attack_fraction} looks wrong. "
-                "For hardware realism keep below 0.05."
+                f"attack_fraction must be in (0, 0.5), got {self.attack_fraction}. "
+                "Values above 0.05 are allowed for stress tests but unrealistic for hardware traces."
             )
         if not 0.0 <= self.idle_fraction < 1.0:
             raise ValueError(f"idle_fraction must be in [0, 1), got {self.idle_fraction}")

@@ -42,8 +42,10 @@ INT8_ARGS ?= --r 8
 
 .PHONY: all setup test cpu gpu benchmark run \
         int8 hardware \
+        smoke train hierarchy realistic primes sweep baselines eval threshold diagnose ablate \
+        adfa beth adfa-stats \
         train-attention-cpu train-attention-bce-gpu train-attention-hierarchy-gpu train-attention-realistic-gpu \
-        compare-primes sweep-p-bases run-baselines eval-trained-attention tune-threshold over-underfit ablate \
+        compare-primes sweep-p-bases run-baselines eval-trained-attention tune-threshold over-underfit \
         open-adfa open-beth open-adfa-stats \
         ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7 \
         clean help clean-results clean-caches clean-checkpoints
@@ -84,38 +86,49 @@ gpu: setup
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-train-attention-cpu: setup
+smoke: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_CPU_ARGS)
 
-train-attention-bce-gpu: setup
+train: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_BCE_GPU_ARGS)
 
-train-attention-hierarchy-gpu: setup
+hierarchy: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_RULE_GPU_ARGS)
 
-train-attention-realistic-gpu: setup
+realistic: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_ATTENTION_REALISTIC_GPU_ARGS)
 
-compare-primes: setup
+primes: setup
 	@set -e; \
 	for p in 3 5 7; do \
 		$(VENV_PYTHON) scripts/train_anomaly_detector.py $(COMPARE_TRAIN_BASE_ARGS) --p $$p --log-json results/compare_p$$p.json --log-md results/compare_p$$p.md; \
 	done
 
-sweep-p-bases: setup
+sweep: setup
 	$(VENV_PYTHON) scripts/run_padic_benchmark.py $(SWEEP_P_ARGS)
 
-run-baselines: setup
+baselines: setup
 	$(VENV_PYTHON) scripts/run_baselines.py $(BASELINE_RULE_ARGS)
 
-eval-trained-attention: setup
+eval: setup
 	$(VENV_PYTHON) scripts/run_padic_benchmark.py $(TRAINED_EVAL_ARGS)
 
-tune-threshold: setup
+threshold: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_GPU_ARGS) --log-json results/tune_threshold.json --log-md results/tune_threshold.md
 
-over-underfit: setup
+diagnose: setup
 	$(VENV_PYTHON) scripts/over_underfit.py --device cuda --log-json results/over_underfit.json --log-md results/over_underfit.md
+
+train-attention-cpu: smoke
+train-attention-bce-gpu: train
+train-attention-hierarchy-gpu: hierarchy
+train-attention-realistic-gpu: realistic
+compare-primes: primes
+sweep-p-bases: sweep
+run-baselines: baselines
+eval-trained-attention: eval
+tune-threshold: threshold
+over-underfit: diagnose
 
 ablate-no-contrastive: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_GPU_ARGS) --alpha 0.0 --log-json results/ablate_no_contrastive.json --log-md results/ablate_no_contrastive.md
@@ -140,19 +153,23 @@ ablate: ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 a
 # ---------------------------------------------------------------------------
 # Open datasets
 # ---------------------------------------------------------------------------
-open-adfa: setup
+adfa: setup
 	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_ADFA_ARGS)
 
-open-beth: setup
+beth: setup
 	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_BETH_ARGS)
 
-open-adfa-stats: setup
+adfa-stats: setup
 	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_STATS_ARGS)
+
+open-adfa: adfa
+open-beth: beth
+open-adfa-stats: adfa-stats
 
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
-analysis: tune-threshold over-underfit compare-primes
+analysis: threshold diagnose primes
 
 # ---------------------------------------------------------------------------
 # 2-adic / INT8
@@ -186,19 +203,19 @@ help:
 	@echo "  make test            Run unit tests"
 	@echo "  make cpu             Run the local CPU benchmark"
 	@echo "  make gpu             Run the CUDA benchmark"
-	@echo "  make train-attention-cpu  Run the hybrid attention CPU smoke-training path"
-	@echo "  make train-attention-bce-gpu  Run the hybrid attention model with BCE-first training"
-	@echo "  make train-attention-hierarchy-gpu  Run the hierarchy-rule dataset training path"
-	@echo "  make train-attention-realistic-gpu  Run the hybrid attention model on the realistic dataset path"
-	@echo "  make compare-primes  Run p=3,5,7 training comparisons"
-	@echo "  make sweep-p-bases   Run the untrained attention hierarchy/sparsity benchmark sweep"
-	@echo "  make run-baselines   Run majority/logreg/MLP/transformer/PDAIC baseline comparisons"
-	@echo "  make eval-trained-attention  Evaluate a trained attention checkpoint on true/shuffled/random hierarchy"
-	@echo "  make tune-threshold  Run training with validation threshold search"
-	@echo "  make over-underfit   Run the learning vs generalization diagnostic"
-	@echo "  make open-adfa       Download ADFA-LD and run the open dataset benchmark"
-	@echo "  make open-beth       Download BETH and run the open dataset benchmark"
-	@echo "  make open-adfa-stats Show ADFA-LD stats only, no training"
+	@echo "  make smoke           Run the local CPU smoke-training path"
+	@echo "  make train           Run the recommended BCE-first GPU training path"
+	@echo "  make hierarchy       Run the hierarchy-rule dataset training path"
+	@echo "  make realistic       Run the realistic idle-heavy training path"
+	@echo "  make primes          Run p=3,5,7 training comparisons"
+	@echo "  make sweep           Run the untrained hierarchy/sparsity benchmark sweep"
+	@echo "  make baselines       Run majority/logreg/MLP/transformer/PDAIC baselines"
+	@echo "  make eval            Evaluate a trained checkpoint on true/shuffled/random hierarchy"
+	@echo "  make threshold       Run training with validation threshold search"
+	@echo "  make diagnose        Run the learning vs generalization diagnostic"
+	@echo "  make adfa            Download ADFA-LD and run the open dataset benchmark"
+	@echo "  make beth            Download BETH and run the open dataset benchmark"
+	@echo "  make adfa-stats      Show ADFA-LD stats only, no training"
 	@echo "  make analysis        Run the analysis workflows"
 	@echo "  make int8            Verify unsigned INT8 against 2-adic arithmetic"
 	@echo "  make ablate          Run the full ablation suite"

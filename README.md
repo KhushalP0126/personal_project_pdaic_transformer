@@ -185,39 +185,39 @@ The repo still needs stronger answers to these questions:
 
 ```bash
 make setup
-make train-attention-cpu
+make smoke
 ```
 
 Recommended GPU path:
 
 ```bash
-make train-attention-bce-gpu
+make train
 ```
 
 Hierarchy-rule benchmark and controls:
 
 ```bash
-make train-attention-hierarchy-gpu
-make run-baselines
-make eval-trained-attention
+make hierarchy
+make baselines
+make eval
 ```
 
 Untrained hierarchy sweep:
 
 ```bash
-make sweep-p-bases
+make sweep
 ```
 
 Realistic training:
 
 ```bash
-make train-attention-realistic-gpu
+make realistic
 ```
 
 Real dataset benchmark:
 
 ```bash
-make open-adfa
+make adfa
 ```
 
 ## Validation
@@ -231,16 +231,16 @@ make test
 ## Make Targets
 
 - `make cpu` and `make gpu` run the benchmark path, not training.
-- `make train-attention-cpu` is the local smoke-training path.
-- `make train-attention-bce-gpu` is the recommended first GPU run for the hybrid attention model.
-- `make train-attention-hierarchy-gpu` runs the hierarchy-rule benchmark training path.
-- `make train-attention-realistic-gpu` runs the realistic idle-heavy training path.
-- `make run-baselines` runs the majority, linear, MLP, transformer, and hierarchy-control baselines.
-- `make eval-trained-attention` evaluates a trained checkpoint against true, shuffled, and random hierarchy controls.
-- `make sweep-p-bases` reports sparsity plus hierarchy-alignment metrics across `p` on an untrained model.
-- `make open-adfa` downloads and benchmarks ADFA-LD.
-- `make open-beth` downloads and benchmarks BETH.
-- `make open-adfa-stats` prints ADFA-LD stats without training.
+- `make smoke` is the local smoke-training path.
+- `make train` is the recommended first GPU run for the hybrid attention model.
+- `make hierarchy` runs the hierarchy-rule benchmark training path.
+- `make realistic` runs the realistic idle-heavy training path.
+- `make baselines` runs the majority, linear, MLP, transformer, and hierarchy-control baselines.
+- `make eval` evaluates a trained checkpoint against true, shuffled, and random hierarchy controls.
+- `make sweep` reports sparsity plus hierarchy-alignment metrics across `p` on an untrained model.
+- `make adfa` downloads and benchmarks ADFA-LD.
+- `make beth` downloads and benchmarks BETH.
+- `make adfa-stats` prints ADFA-LD stats without training.
 
 ## References
 

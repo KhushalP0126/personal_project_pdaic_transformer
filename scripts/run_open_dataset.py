@@ -23,7 +23,6 @@ if str(SRC) not in sys.path:
 
 from padic_transformer.baselines_and_validation import (
     run_isolation_forest_baseline,
-    run_standard_transformer_baseline,
 )
 from padic_transformer.hensel import int64_to_digits
 from padic_transformer.metrics import binary_auroc
