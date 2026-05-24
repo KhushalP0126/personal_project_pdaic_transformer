@@ -41,6 +41,88 @@ What remains open:
 - stronger real-dataset evidence
 - a tighter paper narrative
 
+## Current Evidence From Results
+
+The current results do **not** confirm the central hypothesis yet. They show useful signal, but the evidence is still weak and mixed.
+
+### Central finding
+
+`results/trained_attention_eval.json` is the most important hierarchy-control result so far:
+
+| Variant | AUROC |
+|---|---:|
+| true | 0.521 |
+| shuffled | 0.473 |
+| random | 0.486 |
+
+The true hierarchy checkpoint is better than shuffled and random hierarchy, which is the expected direction. The gap is small, and the absolute AUROC values are weak. This checkpoint came from the small CPU smoke run (`d_model=64`), so it is not conclusive. It is a signal to re-test with a stronger checkpoint, not proof.
+
+### Baseline report
+
+`results/baseline_report.json` is the most concerning result:
+
+| Model | AUROC |
+|---|---:|
+| standard_transformer | 0.611 |
+| isolation_forest | 0.584 |
+| padic_attention_true | 0.500 |
+| padic_attention_shuffled | 0.533 |
+| padic_attention_random | 0.504 |
+
+The p-adic attention model with the true hierarchy loses to the standard transformer and IsolationForest on the hierarchy-rule dataset. Shuffled hierarchy scoring higher than true hierarchy is the opposite of what the hypothesis requires. This comparison is not final because the baseline run used small configs and only 5 epochs, but it is the strongest warning sign in the current evidence.
+
+### Prime comparisons
+
+The vanilla prime sweep shows `p=3` performs best:
+
+| Prime | AUROC |
+|---:|---:|
+| 3 | 0.688 |
+| 5 | 0.668 |
+| 7 | 0.648 |
+
+The PDAIC attention sweep shows the same pattern with a stronger `p=3` result:
+
+| Prime | AUROC |
+|---:|---:|
+| 3 | 0.730 |
+| 5 | 0.652 |
+| 7 | 0.656 |
+
+This is the cleanest positive result so far. Smaller primes give deeper trees for fixed `r`, so `p=3` having the strongest hierarchy signal is plausible. PDAIC attention improves over the non-attention model at `p=3` by about four AUROC points in these runs.
+
+### Realistic run
+
+`results/training_log.json` reports a high AUROC around 0.84, but the run is not structurally strong evidence yet. The validation set has only 20 anomalies because the realistic attack fraction is `0.005`. Best F1 is low, and the model mostly predicts normal while occasionally catching a true anomaly.
+
+The score gap does grow during training, which suggests real signal, but the AUROC estimate is noisy with so few positives. This run needs more validation anomalies or multiple seeds before it can support a strong claim.
+
+### Threshold tuning
+
+`results/tune_threshold.json` is currently the cleanest training run. It reaches about 0.743 AUROC on a more balanced synthetic setup. The ranking signal is real, but the train/validation loss gap is still large, which points to overfitting.
+
+### Over/underfit diagnostic
+
+`results/over_underfit.json` confirms the small-model problem. AUROC plateaus near 0.58 while validation loss diverges after the early epochs. The smaller `d_model=128` setup is underpowered or overfitting the available training distribution.
+
+### Attention sweep
+
+`results/p_base_attention_sweep.json` shows the untrained `padic_gate` near `0.1192`, which is `sigmoid(-2.0)`. Because that sweep is untrained, it mostly measures the prior. It also shows the current gate initialization is very conservative, so the p-adic term contributes only a small additive bias at startup.
+
+### Critical problems
+
+1. The p-adic gate may be too closed. Starting at `sigmoid(-2.0) ~= 0.119` makes the p-adic bias weak. A stronger test should initialize `padic_gate` at `0.0`, or add a regularizer that prevents the gate from staying near zero.
+2. The baseline comparison is not yet fair. `make baselines` used small configs and 5 epochs, while the stronger training runs use more compute. Re-run baselines with matched epochs and model sizes before drawing conclusions.
+3. Validation loss diverges in meaningful runs. Train loss drops while validation loss climbs, so the model is memorizing the synthetic distribution. This needs more diverse training data, stronger dropout, weight-decay tuning, or better hierarchy-rule generation.
+
+### Next experiment order
+
+1. Change `padic_gate` initialization from `-2.0` to `0.0`.
+2. Re-run `make train`.
+3. Re-run `make eval` against the new checkpoint.
+4. Re-run `make baselines` with around 20 epochs or matched compute.
+5. Treat `true >> shuffled/random` as the key evidence threshold. If that does not appear, the hierarchy hypothesis needs rethinking.
+
 ## What This Repo Is Testing
 
 ### 1. The data hypothesis
@@ -238,12 +320,15 @@ make test
 - `make realistic` runs the realistic idle-heavy training path.
 - `make primes` runs vanilla `p=3,5,7` training comparisons.
 - `make pdaic-primes` runs PDAIC attention `p=3,5,7` training comparisons.
+- `make compare-analysis` compares the vanilla and PDAIC prime sweep logs.
+- `make analysis` runs vanilla primes, PDAIC primes, and the comparison report.
 - `make baselines` runs the majority, linear, MLP, transformer, and hierarchy-control baselines.
 - `make eval` evaluates a trained checkpoint against true, shuffled, and random hierarchy controls.
 - `make sweep` reports sparsity plus hierarchy-alignment metrics across `p` on an untrained model.
-- `make adfa` downloads and benchmarks ADFA-LD.
-- `make beth` downloads and benchmarks BETH.
-- `make adfa-stats` prints ADFA-LD stats without training.
+- `make adfa` downloads ADFA-LD if needed and benchmarks it. It uses `git` when available and falls back to a GitHub ZIP download.
+- `make beth` downloads and benchmarks BETH. It needs Kaggle credentials, or local BETH CSV files under `data/beth`.
+- `make adfa-stats` prints local ADFA-LD stats without training or download. Run `make adfa` first, or place the extracted dataset under `data/adfa/ADFA-LD`.
+- `make int8` verifies unsigned INT8 arithmetic against truncated 2-adic arithmetic.
 
 ## References
 
