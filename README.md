@@ -253,6 +253,20 @@ The repo still needs stronger answers to these questions:
 - Does it transfer to real datasets?
 - Are the reported gains stable across seeds?
 
+## Potential Uses of PDAIC Numbers
+
+The current codebase is built for host intrusion detection, but the reusable idea is broader: encode a discrete hierarchy as adic digits, then let attention combine learned content rules with hierarchy-aware bias.
+
+| Application domain | Readiness | Codebase components reused | Required changes | Estimated pivot time |
+|---|---:|---|---|---|
+| Host intrusion detection, including ADFA-LD | 100% | Existing models, pipelines, dataloaders, Makefile targets, and evaluation scripts. | None. This is the native baseline target. | 0 hours |
+| IP routing and network analytics | 95% | Core transformer, p-adic attention, evaluation scripts, and classification head. | Add a converter from raw PCAP/network logs or IP strings into token sequences. | 2-4 hours |
+| Lexical semantics and WordNet | 75% | Core transformer, p-adic attention, and classification head. | Replace the syscall tokenizer with a parser that maps words to WordNet tree/path IDs. | 1 day |
+| Genomics and phylogenetics | 45% | Token embedding layer, classification head, and training loop. | Modify attention to accept a supplied evolutionary-tree distance matrix instead of computing shared-prefix distances from sequence digits. | 3-5 days |
+| Document retrieval and Wasserstein-style matching | 15% | Token embedding layer and some raw attention math. | Replace the classification head, rewrite the objective, build a Siamese/twin-network setup, and add optimal-transport solvers. | 1-2 weeks |
+
+The nearest pivot is IP routing. IP addresses are already hierarchical discrete strings, so the model can use the same digit-window representation after preprocessing. Lexical semantics is the next most plausible pivot because WordNet already gives a tree structure; the main work is data preparation rather than model surgery.
+
 ## Recommended Experiment Order
 
 1. Start with BCE-first hybrid attention.
