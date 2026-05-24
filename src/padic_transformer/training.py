@@ -574,6 +574,7 @@ def train(
 
     for epoch in range(1, config.epochs + 1):
         t0 = time.perf_counter()
+        lr_now = optimizer.param_groups[0]["lr"]
 
         train_metrics = _train_epoch(
             model,
@@ -587,11 +588,9 @@ def train(
             scaler,
         )
         val_metrics = _val_epoch(model, val_loader, loss_fn, device, amp_dtype)
-        scheduler.step()
         log_temperature_health(model, epoch)
 
         elapsed = time.perf_counter() - t0
-        lr_now = scheduler.get_last_lr()[0]
         attn_suffix = ""
         if "hierarchy_gap" in val_metrics and "padic_gate" in val_metrics:
             attn_suffix = (
@@ -629,6 +628,8 @@ def train(
 
         if epoch % config.save_every == 0:
             _save_checkpoint(ckpt_dir / f"epoch_{epoch:04d}.pt", model, optimizer, epoch, val_metrics, config)
+
+        scheduler.step()
 
     _save_checkpoint(ckpt_dir / "final.pt", model, optimizer, config.epochs, history[-1]["val"], config)
 

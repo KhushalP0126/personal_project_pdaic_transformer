@@ -231,7 +231,7 @@ make test
 ## Make Targets
 
 - `make cpu` and `make gpu` run the benchmark path, not training.
-- `make smoke` is the local smoke-training path.
+- `make smoke` is the local CPU sanity-training path.
 - `make train` is the recommended first GPU run for the hybrid attention model.
 - `make hierarchy` runs the hierarchy-rule benchmark training path.
 - `make realistic` runs the realistic idle-heavy training path.

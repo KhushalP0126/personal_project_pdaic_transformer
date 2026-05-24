@@ -274,6 +274,21 @@ class TestTrainingSmoke(unittest.TestCase):
                 scaler=None,
             )
 
+    def test_scheduler_epoch_lrs_stay_nonzero_for_short_run(self) -> None:
+        from padic_transformer.training import _build_scheduler
+
+        model = torch.nn.Linear(1, 1)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+        cfg = TrainConfig(epochs=3, warmup_epochs=2)
+        scheduler = _build_scheduler(optimizer, cfg)
+        epoch_lrs = []
+        for _ in range(cfg.epochs):
+            epoch_lrs.append(optimizer.param_groups[0]["lr"])
+            optimizer.step()
+            scheduler.step()
+
+        self.assertTrue(all(lr > 0.0 for lr in epoch_lrs))
+
     def test_threshold_search_metrics_reports_best_f1(self) -> None:
         from padic_transformer.training import _search_threshold_metrics
 
