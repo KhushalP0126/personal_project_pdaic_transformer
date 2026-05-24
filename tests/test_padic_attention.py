@@ -66,8 +66,7 @@ class TestPadicAttentionHead(unittest.TestCase):
         ):
             self.assertIn(key, metrics)
         gate = float(metrics["padic_gate"].item())
-        self.assertGreaterEqual(gate, 0.0)
-        self.assertLess(gate, 0.5)
+        self.assertAlmostEqual(gate, 0.5, places=6)
 
 
 class TestPadicMultiHeadAttention(unittest.TestCase):

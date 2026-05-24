@@ -589,6 +589,8 @@ def train(
         )
         val_metrics = _val_epoch(model, val_loader, loss_fn, device, amp_dtype)
         log_temperature_health(model, epoch)
+        scheduler.step()
+        lr_next = optimizer.param_groups[0]["lr"]
 
         elapsed = time.perf_counter() - t0
         attn_suffix = ""
@@ -601,6 +603,8 @@ def train(
         epoch_record = {
             "epoch": epoch,
             "lr": lr_now,
+            "lr_used": lr_now,
+            "lr_next": lr_next,
             "train": train_metrics,
             "val": val_metrics,
             "elapsed_s": elapsed,
@@ -628,8 +632,6 @@ def train(
 
         if epoch % config.save_every == 0:
             _save_checkpoint(ckpt_dir / f"epoch_{epoch:04d}.pt", model, optimizer, epoch, val_metrics, config)
-
-        scheduler.step()
 
     _save_checkpoint(ckpt_dir / "final.pt", model, optimizer, config.epochs, history[-1]["val"], config)
 

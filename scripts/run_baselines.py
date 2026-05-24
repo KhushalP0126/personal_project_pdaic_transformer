@@ -30,6 +30,13 @@ from padic_transformer.dataset_realistic import RealisticBusDataset, RealisticDa
 from padic_transformer.ultrametric import generate_clustered_hensel_dataset
 
 
+def run_step(name: str, fn):
+    print(f"[baselines] running {name}...", flush=True)
+    result = fn()
+    print(f"[baselines] finished {name}", flush=True)
+    return result
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
@@ -48,6 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-samples", type=int, default=2048)
     parser.add_argument("--val-samples", type=int, default=512)
     parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--d-model", type=int, default=256)
+    parser.add_argument("--n-heads", type=int, default=8)
+    parser.add_argument("--n-layers", type=int, default=4)
+    parser.add_argument("--d-digit", type=int, default=16)
     parser.add_argument("--output-json", default="results/baseline_report.json")
     return parser.parse_args()
 
@@ -95,82 +108,138 @@ def main() -> None:
         val_ds = RealisticBusDataset(hensel, realistic_cfg, n_samples=args.val_samples)
         pos_weight = train_ds.pos_weight
 
-    majority = run_majority_baseline(train_ds.labels, val_ds.labels)
-    iso = run_isolation_forest_baseline(train_ds.windows, train_ds.labels, val_ds.windows, val_ds.labels)
-    logreg = run_logistic_regression_baseline(
-        train_ds.windows,
-        train_ds.labels,
-        val_ds.windows,
-        val_ds.labels,
-        epochs=args.epochs,
-        pos_weight=pos_weight,
-        device=device,
+    majority = run_step("majority", lambda: run_majority_baseline(train_ds.labels, val_ds.labels))
+    iso = run_step(
+        "isolation_forest",
+        lambda: run_isolation_forest_baseline(train_ds.windows, train_ds.labels, val_ds.windows, val_ds.labels),
     )
-    mlp = run_mlp_baseline(
-        train_ds.windows,
-        train_ds.labels,
-        val_ds.windows,
-        val_ds.labels,
-        epochs=args.epochs,
-        pos_weight=pos_weight,
-        device=device,
+    logreg = run_step(
+        "logistic_regression",
+        lambda: run_logistic_regression_baseline(
+            train_ds.windows,
+            train_ds.labels,
+            val_ds.windows,
+            val_ds.labels,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            pos_weight=pos_weight,
+            device=device,
+        ),
     )
-    std = run_standard_transformer_baseline(
-        train_ds.windows,
-        train_ds.labels,
-        val_ds.windows,
-        val_ds.labels,
-        p=args.p,
-        epochs=args.epochs,
-        pos_weight=pos_weight,
-        device=device,
+    mlp = run_step(
+        "mlp",
+        lambda: run_mlp_baseline(
+            train_ds.windows,
+            train_ds.labels,
+            val_ds.windows,
+            val_ds.labels,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            pos_weight=pos_weight,
+            device=device,
+        ),
     )
-    hensel_transformer = run_hensel_transformer_baseline(
-        train_ds.windows,
-        train_ds.labels,
-        val_ds.windows,
-        val_ds.labels,
-        p=args.p,
-        r=args.r,
-        epochs=args.epochs,
-        pos_weight=pos_weight,
-        device=device,
+    std = run_step(
+        "standard_transformer",
+        lambda: run_standard_transformer_baseline(
+            train_ds.windows,
+            train_ds.labels,
+            val_ds.windows,
+            val_ds.labels,
+            p=args.p,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            pos_weight=pos_weight,
+            device=device,
+        ),
     )
-    padic_true = run_padic_attention_baseline(
-        train_ds.windows,
-        train_ds.labels,
-        val_ds.windows,
-        val_ds.labels,
-        p=args.p,
-        r=args.r,
-        hierarchy_variant="true",
-        epochs=args.epochs,
-        pos_weight=pos_weight,
-        device=device,
+    hensel_transformer = run_step(
+        "hensel_transformer",
+        lambda: run_hensel_transformer_baseline(
+            train_ds.windows,
+            train_ds.labels,
+            val_ds.windows,
+            val_ds.labels,
+            p=args.p,
+            r=args.r,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            pos_weight=pos_weight,
+            device=device,
+        ),
     )
-    padic_shuffled = run_padic_attention_baseline(
-        train_ds.windows,
-        train_ds.labels,
-        val_ds.windows,
-        val_ds.labels,
-        p=args.p,
-        r=args.r,
-        hierarchy_variant="shuffled",
-        epochs=args.epochs,
-        pos_weight=pos_weight,
-        device=device,
+    padic_true = run_step(
+        "padic_attention_true",
+        lambda: run_padic_attention_baseline(
+            train_ds.windows,
+            train_ds.labels,
+            val_ds.windows,
+            val_ds.labels,
+            p=args.p,
+            r=args.r,
+            hierarchy_variant="true",
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            d_digit=args.d_digit,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            pos_weight=pos_weight,
+            device=device,
+        ),
     )
-    padic_random = run_padic_attention_baseline(
-        train_ds.windows,
-        train_ds.labels,
-        val_ds.windows,
-        val_ds.labels,
-        p=args.p,
-        r=args.r,
-        hierarchy_variant="random",
-        epochs=args.epochs,
-        pos_weight=pos_weight,
-        device=device,
+    padic_shuffled = run_step(
+        "padic_attention_shuffled",
+        lambda: run_padic_attention_baseline(
+            train_ds.windows,
+            train_ds.labels,
+            val_ds.windows,
+            val_ds.labels,
+            p=args.p,
+            r=args.r,
+            hierarchy_variant="shuffled",
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            d_digit=args.d_digit,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            pos_weight=pos_weight,
+            device=device,
+        ),
+    )
+    padic_random = run_step(
+        "padic_attention_random",
+        lambda: run_padic_attention_baseline(
+            train_ds.windows,
+            train_ds.labels,
+            val_ds.windows,
+            val_ds.labels,
+            p=args.p,
+            r=args.r,
+            hierarchy_variant="random",
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            d_digit=args.d_digit,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            pos_weight=pos_weight,
+            device=device,
+        ),
     )
 
     report = {

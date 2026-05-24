@@ -239,8 +239,13 @@ def nearest_center_accuracy(
     labels: torch.Tensor,
     centers: torch.Tensor,
     center_labels: torch.Tensor | None = None,
+    chunk_size: int = 8192,
 ) -> float:
-    """Classify tokens by nearest p-adic center and report accuracy."""
+    """Classify tokens by nearest p-adic center and report accuracy.
+
+    The computation is chunked to avoid allocating a full [N, C, r] tensor for
+    large benchmark sweeps.
+    """
     arr = torch.as_tensor(digits)
     labs = torch.as_tensor(labels, device=arr.device)
     ctr = torch.as_tensor(centers, device=arr.device)
@@ -257,8 +262,14 @@ def nearest_center_accuracy(
         center_label_values = torch.as_tensor(center_labels, dtype=torch.int64, device=arr.device)
         if center_label_values.ndim != 1 or center_label_values.shape[0] != ctr.shape[0]:
             raise ValueError("center_labels must have one entry per center row")
+    if chunk_size < 1:
+        raise ValueError("chunk_size must be positive")
 
-    equal = arr[:, None, :] == ctr[None, :, :]
-    scores = equal.to(torch.int64).cumprod(dim=-1).sum(dim=-1)
-    best = center_label_values[torch.argmax(scores, dim=1)]
-    return float((best == labs).to(torch.float32).mean().item())
+    correct = 0
+    for start in range(0, arr.shape[0], chunk_size):
+        chunk = arr[start : start + chunk_size]
+        equal = chunk[:, None, :] == ctr[None, :, :]
+        scores = equal.to(torch.int64).cumprod(dim=-1).sum(dim=-1)
+        best = center_label_values[torch.argmax(scores, dim=1)]
+        correct += int((best == labs[start : start + chunk_size]).sum().item())
+    return correct / float(max(1, arr.shape[0]))

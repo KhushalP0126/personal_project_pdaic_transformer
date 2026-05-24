@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import csv
+import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -31,6 +34,10 @@ from padic_transformer.model_fixes import StreamingWindowScorer, quantize_dynami
 from padic_transformer.ultrametric import ultrametric_violation_rate
 
 ADFA_REPO_URL = "https://github.com/verazuo/a-labelled-version-of-the-ADFA-LD-dataset.git"
+ADFA_ARCHIVE_URLS = [
+    "https://github.com/verazuo/a-labelled-version-of-the-ADFA-LD-dataset/archive/refs/heads/main.zip",
+    "https://github.com/verazuo/a-labelled-version-of-the-ADFA-LD-dataset/archive/refs/heads/master.zip",
+]
 ADFA_SYSCALL_VOCAB_SIZE = 200
 
 
@@ -49,22 +56,48 @@ def download_adfa(data_dir: Path) -> Path:
         return repo_dir
 
     data_dir.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        ["git", "clone", "--depth", "1", ADFA_REPO_URL, str(repo_dir)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"git clone failed:\n{result.stderr}\n"
-            "Make sure git is installed or download manually."
+    if shutil.which("git") is not None:
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", ADFA_REPO_URL, str(repo_dir)],
+            capture_output=True,
+            text=True,
         )
+        if result.returncode == 0:
+            zip_path = repo_dir / "ADFA-LD.zip"
+            if zip_path.exists():
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(repo_dir)
+            return repo_dir
 
-    zip_path = repo_dir / "ADFA-LD.zip"
-    if zip_path.exists():
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(repo_dir)
-    return repo_dir
+    archive_path = data_dir / "adfa_ld_source.zip"
+    errors: list[str] = []
+    for url in ADFA_ARCHIVE_URLS:
+        try:
+            urllib.request.urlretrieve(url, archive_path)
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(data_dir)
+            extracted_dirs = sorted(
+                path
+                for path in data_dir.glob("a-labelled-version-of-the-ADFA-LD-dataset-*")
+                if path.is_dir()
+            )
+            if not extracted_dirs:
+                raise RuntimeError("archive did not contain the expected ADFA-LD directory")
+            extracted = extracted_dirs[0]
+            extracted.rename(repo_dir)
+            zip_path = repo_dir / "ADFA-LD.zip"
+            if zip_path.exists():
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(repo_dir)
+            return repo_dir
+        except (OSError, RuntimeError, urllib.error.URLError, zipfile.BadZipFile) as exc:
+            errors.append(f"{url}: {exc}")
+
+    raise RuntimeError(
+        "Could not download ADFA-LD. Install git, allow GitHub ZIP downloads, "
+        "or manually place the extracted dataset under data/adfa/ADFA-LD.\n"
+        + "\n".join(errors)
+    )
 
 
 def download_beth(data_dir: Path) -> Path:
@@ -73,8 +106,20 @@ def download_beth(data_dir: Path) -> Path:
     if csv_files:
         return data_dir
 
+    kaggle_bin = shutil.which("kaggle")
+    if kaggle_bin is None:
+        venv_kaggle = Path(sys.executable).resolve().parent / "kaggle"
+        if venv_kaggle.exists():
+            kaggle_bin = str(venv_kaggle)
+
+    if kaggle_bin is None:
+        raise RuntimeError(
+            "Kaggle CLI is not installed. Run `make setup`, then configure Kaggle credentials, "
+            "or manually place BETH CSV files under data/beth."
+        )
+
     result = subprocess.run(
-        ["kaggle", "datasets", "download", "katehighnam/beth-dataset", "-p", str(data_dir), "--unzip"],
+        [kaggle_bin, "datasets", "download", "katehighnam/beth-dataset", "-p", str(data_dir), "--unzip"],
         capture_output=True,
         text=True,
     )
@@ -117,7 +162,10 @@ def load_adfa_ld(
     if not adfa_root.exists():
         adfa_root = repo_dir
     if not adfa_root.exists():
-        raise FileNotFoundError(f"Could not find ADFA-LD directory under {repo_dir}")
+        raise FileNotFoundError(
+            f"Could not find ADFA-LD directory under {repo_dir}. "
+            "Run `make adfa` to download it, or place the extracted dataset under data/adfa/ADFA-LD."
+        )
 
     raw_traces: list[tuple[list[int], int, str]] = []
     for split_name, label in [("Training_Data_Master", 0), ("Validation_Data_Master", 0)]:
@@ -523,25 +571,29 @@ def main() -> None:
     args = parse_args()
     data_dir = Path(args.data_dir)
 
-    if args.dataset == "adfa":
-        windows, labels, stats, families = load_adfa_ld(
-            data_dir,
-            p=args.p,
-            r=args.r,
-            window_size=args.window_size,
-            stride=args.stride,
-            download=not args.no_download,
-        )
-    else:
-        if not args.no_download:
-            download_beth(data_dir)
-        windows, labels, stats, families = load_beth(
-            data_dir,
-            p=args.p,
-            r=args.r,
-            window_size=args.window_size,
-            stride=args.stride,
-        )
+    try:
+        if args.dataset == "adfa":
+            windows, labels, stats, families = load_adfa_ld(
+                data_dir,
+                p=args.p,
+                r=args.r,
+                window_size=args.window_size,
+                stride=args.stride,
+                download=not args.no_download,
+            )
+        else:
+            if not args.no_download:
+                download_beth(data_dir)
+            windows, labels, stats, families = load_beth(
+                data_dir,
+                p=args.p,
+                r=args.r,
+                window_size=args.window_size,
+                stride=args.stride,
+            )
+    except (FileNotFoundError, RuntimeError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     um_results = check_ultrametric(windows, labels, n_triplets=args.triplets)
 

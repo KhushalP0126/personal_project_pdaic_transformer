@@ -64,7 +64,12 @@ def _remap_hierarchy_windows(
         )
         remapped_vocab = _token_ids_from_digits(random_digits, p).reshape(unique_ids.numel())
 
+    # unique_ids is derived from flat_ids, so searchsorted should always hit
+    # exact entries. Keep the explicit check to avoid silent bad remaps if this
+    # helper is changed later.
     remap_indices = torch.searchsorted(unique_ids, flat_ids)
+    if not bool(torch.equal(unique_ids[remap_indices], flat_ids)):
+        raise RuntimeError("hierarchy remap invariant failed: token id missing from vocabulary")
     remapped_ids = remapped_vocab[remap_indices]
     remapped_digits = int64_to_digits(remapped_ids, p=p, r=windows.shape[-1]).reshape_as(windows)
     return remapped_digits
@@ -331,8 +336,11 @@ def run_standard_transformer_baseline(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    r = train_windows.shape[-1]
-    vocab_size = p**r
+    train_raw_ids = StandardTransformerDetector.digits_to_ids(train_windows, p)
+    val_raw_ids = StandardTransformerDetector.digits_to_ids(val_windows, p)
+    vocab = torch.unique(train_raw_ids.reshape(-1), sorted=True)
+    oov_id = vocab.numel()
+    vocab_size = int(oov_id + 1)
     model = StandardTransformerDetector(
         vocab_size=vocab_size,
         d_model=d_model,
@@ -342,8 +350,10 @@ def run_standard_transformer_baseline(
         head_hidden=d_model // 2,
     ).to(device)
 
-    train_ids = StandardTransformerDetector.digits_to_ids(train_windows, p)
-    val_ids = StandardTransformerDetector.digits_to_ids(val_windows, p)
+    train_ids = torch.searchsorted(vocab, train_raw_ids.reshape(-1)).reshape_as(train_raw_ids)
+    val_positions = torch.searchsorted(vocab, val_raw_ids.reshape(-1))
+    val_valid = (val_positions < vocab.numel()) & (vocab[val_positions.clamp(max=max(0, vocab.numel() - 1))] == val_raw_ids.reshape(-1))
+    val_ids = torch.where(val_valid, val_positions, torch.full_like(val_positions, oov_id)).reshape_as(val_raw_ids)
 
     train_ds = TensorDataset(train_ids, train_labels)
     val_ds = TensorDataset(val_ids, val_labels)

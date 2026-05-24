@@ -23,8 +23,9 @@ TRAIN_ATTENTION_REALISTIC_GPU_ARGS ?= --attention --device cuda --p 3 --r 16 --d
 COMPARE_TRAIN_BASE_ARGS ?= --device cuda --r 16 --d-model 192 --n-heads 4 --n-layers 3 --ffn-dim 768 --head-hidden 96 --dropout 0.1 --window-size 32 --attack-fraction 0.35 --attack-min-len 2 --attack-max-len 8 --n-train 32768 --n-val 4096 --samples 16384 --classes 32 --tokens-per-class 128 --epochs 8 --batch-size 128 --grad-accum 4 --lr 2e-4 --weight-decay 1e-2 --warmup-epochs 2 --num-workers 4 --alpha 0.5 --pos-weight 1.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
 COMPARE_PDAIC_TRAIN_BASE_ARGS ?= --attention --device cuda --r 16 --d-model 192 --n-heads 4 --n-layers 3 --ffn-dim 768 --head-hidden 96 --dropout 0.1 --d-digit 8 --window-size 32 --attack-fraction 0.35 --attack-min-len 2 --attack-max-len 8 --n-train 32768 --n-val 4096 --samples 16384 --classes 32 --tokens-per-class 128 --epochs 8 --batch-size 128 --grad-accum 4 --lr 2e-4 --weight-decay 1e-2 --warmup-epochs 2 --num-workers 4 --alpha 0.0 --margin-pos 0.1 --margin-neg 0.5 --save-every 5
 SWEEP_P_ARGS ?= --sweep-p-bases --device cpu --p-list 3 5 7 --sweep-r 8 --sweep-samples 512 --sweep-classes 16 --sweep-tokens-per-class 64 --sweep-window-size 32 --sweep-attack-fraction 0.30 --sweep-attack-min-len 2 --sweep-attack-max-len 8 --sweep-batch-size 64 --sweep-batches 4
-BASELINE_RULE_ARGS ?= --device cpu --hierarchy-rule-dataset --p 3 --r 8 --samples 4096 --classes 16 --tokens-per-class 64 --window-size 32 --attack-fraction 0.30 --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --train-samples 2048 --val-samples 512 --epochs 5 --output-json results/baseline_report.json
+BASELINE_RULE_ARGS ?= --device cuda --hierarchy-rule-dataset --p 3 --r 16 --samples 16384 --classes 32 --tokens-per-class 128 --window-size 32 --attack-fraction 0.30 --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --train-samples 32768 --val-samples 4096 --epochs 20 --batch-size 128 --lr 2e-4 --d-model 192 --n-heads 4 --n-layers 3 --d-digit 8 --output-json results/baseline_report.json
 TRAINED_EVAL_ARGS ?= --device cpu --trained-eval-checkpoint results/checkpoints/best.pt --trained-eval-dataset hierarchy_rules --trained-eval-samples 512 --trained-eval-window-size 32 --trained-eval-attack-fraction 0.30 --trained-eval-batch-size 64
+COMPARE_ANALYSIS_ARGS ?= --p-list 3 5 7 --output-json results/prime_comparison.json --output-md results/prime_comparison.md
 OPEN_DATASET_ADFA_ARGS ?= --dataset adfa --data-dir ./data/adfa --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device cpu
 OPEN_DATASET_BETH_ARGS ?= --dataset beth --data-dir ./data/beth --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device cpu
 OPEN_DATASET_STATS_ARGS ?= --dataset adfa --data-dir ./data/adfa --stats-only --no-download --p 3 --r 8 --window-size 32 --stride 4 --device cpu
@@ -43,7 +44,7 @@ INT8_ARGS ?= --r 8
 
 .PHONY: all setup test cpu gpu benchmark run \
         int8 hardware \
-        smoke train vanilla hierarchy realistic primes pdaic-primes sweep baselines eval threshold diagnose ablate \
+        smoke train vanilla hierarchy realistic primes pdaic-primes compare-analysis sweep baselines eval threshold diagnose ablate \
         adfa beth adfa-stats \
         train-attention-cpu train-attention-bce-gpu train-attention-hierarchy-gpu train-attention-realistic-gpu \
         compare-primes sweep-p-bases run-baselines eval-trained-attention tune-threshold over-underfit \
@@ -60,7 +61,7 @@ $(VENV_PYTHON):
 	$(PYTHON) -m venv $(VENV)
 
 $(SETUP_STAMP): pyproject.toml $(VENV_PYTHON)
-	$(VENV_PYTHON) -c "import numpy, torch" || $(PIP) install numpy torch
+	$(PIP) install -e .
 	touch $(SETUP_STAMP)
 
 setup: $(SETUP_STAMP)
@@ -113,6 +114,9 @@ pdaic-primes: setup
 	for p in 3 5 7; do \
 		$(VENV_PYTHON) scripts/train_anomaly_detector.py $(COMPARE_PDAIC_TRAIN_BASE_ARGS) --p $$p --log-json results/compare_pdaic_p$$p.json --log-md results/compare_pdaic_p$$p.md; \
 	done
+
+compare-analysis: setup
+	$(VENV_PYTHON) scripts/compare_prime_runs.py $(COMPARE_ANALYSIS_ARGS)
 
 sweep: setup
 	$(VENV_PYTHON) scripts/run_padic_benchmark.py $(SWEEP_P_ARGS)
@@ -179,7 +183,7 @@ open-adfa-stats: adfa-stats
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
-analysis: threshold diagnose primes
+analysis: threshold diagnose primes pdaic-primes compare-analysis
 
 # ---------------------------------------------------------------------------
 # 2-adic / INT8
@@ -220,14 +224,15 @@ help:
 	@echo "  make realistic       Run the realistic idle-heavy training path"
 	@echo "  make primes          Run vanilla p=3,5,7 training comparisons"
 	@echo "  make pdaic-primes    Run PDAIC p=3,5,7 training comparisons"
+	@echo "  make compare-analysis  Compare vanilla vs PDAIC prime sweep logs"
 	@echo "  make sweep           Run the untrained hierarchy/sparsity benchmark sweep"
 	@echo "  make baselines       Run majority/logreg/MLP/transformer/PDAIC baselines"
 	@echo "  make eval            Evaluate a trained checkpoint on true/shuffled/random hierarchy"
 	@echo "  make threshold       Run training with validation threshold search"
 	@echo "  make diagnose        Run the learning vs generalization diagnostic"
-	@echo "  make adfa            Download ADFA-LD and run the open dataset benchmark"
-	@echo "  make beth            Download BETH and run the open dataset benchmark"
-	@echo "  make adfa-stats      Show ADFA-LD stats only, no training"
+	@echo "  make adfa            Download ADFA-LD if needed and run the open dataset benchmark"
+	@echo "  make beth            Download BETH with Kaggle CLI if needed and run the benchmark"
+	@echo "  make adfa-stats      Show local ADFA-LD stats only, no download or training"
 	@echo "  make analysis        Run the analysis workflows"
 	@echo "  make int8            Verify unsigned INT8 against 2-adic arithmetic"
 	@echo "  make ablate          Run the full ablation suite"

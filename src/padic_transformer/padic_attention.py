@@ -175,6 +175,28 @@ class SoftPadicValuation(nn.Module):
         soft_val = (prefix * weights).sum(dim=-1)
         return soft_val / (weights.sum() + self.eps)
 
+    def pairwise(self, digits: torch.Tensor) -> torch.Tensor:
+        """Return soft shared-prefix scores for all pairs in each window.
+
+        This computes one digit position at a time and avoids materializing a
+        full [batch, seq, seq, r] expanded integer tensor inside each attention
+        head.
+        """
+        if digits.ndim != 3 or digits.shape[-1] != self.r:
+            raise ValueError(f"digits must have shape [batch, seq, r={self.r}]")
+
+        batch, seq, _ = digits.shape
+        weights = F.softplus(self.prefix_weights)
+        running_log = digits.new_zeros((batch, seq, seq), dtype=torch.float32)
+        soft_val = digits.new_zeros((batch, seq, seq), dtype=torch.float32)
+        for pos in range(self.r):
+            emb = self.digit_embeddings[pos](digits[..., pos])
+            sq_dist = ((emb.unsqueeze(2) - emb.unsqueeze(1)) ** 2).sum(dim=-1)
+            tau = self.log_temperature[pos].exp().clamp(min=0.01, max=50.0)
+            running_log = running_log + (-tau * sq_dist).clamp_min(math.log(self.eps))
+            soft_val = soft_val + torch.exp(running_log) * weights[pos]
+        return soft_val / (weights.sum() + self.eps)
+
 
 class PadicAttentionHead(nn.Module):
     """Single attention head using soft p-adic valuation as logits."""
@@ -193,7 +215,7 @@ class PadicAttentionHead(nn.Module):
         self.logit_scale = nn.Parameter(torch.tensor(5.0))
         self.query_proj = nn.Linear(d_model, d_head)
         self.key_proj = nn.Linear(d_model, d_head)
-        self.padic_gate = nn.Parameter(torch.tensor(-2.0))
+        self.padic_gate = nn.Parameter(torch.tensor(0.0))
         self.value_proj = nn.Linear(d_model, d_head)
         self.dropout = nn.Dropout(dropout)
 
@@ -209,20 +231,7 @@ class PadicAttentionHead(nn.Module):
         if digits.shape[:2] != x.shape[:2]:
             raise ValueError("digits and x must have matching batch/seq dimensions")
 
-        batch, seq, _ = digits.shape
-        flat_a = (
-            digits.unsqueeze(2)
-            .expand(-1, -1, seq, -1)
-            .contiguous()
-            .reshape(batch * seq, seq, self.valuation.r)
-        )
-        flat_b = (
-            digits.unsqueeze(1)
-            .expand(-1, seq, -1, -1)
-            .contiguous()
-            .reshape(batch * seq, seq, self.valuation.r)
-        )
-        raw = self.valuation(flat_a, flat_b).reshape(batch, seq, seq).to(dtype=x.dtype)
+        raw = self.valuation.pairwise(digits).to(dtype=x.dtype)
         scale = self.logit_scale.clamp(0.1, 25.0)
         q = self.query_proj(x)
         k = self.key_proj(x)
