@@ -66,7 +66,7 @@ class TestPadicAttentionHead(unittest.TestCase):
         ):
             self.assertIn(key, metrics)
         gate = float(metrics["padic_gate"].item())
-        self.assertAlmostEqual(gate, 0.5, places=6)
+        self.assertAlmostEqual(gate, torch.sigmoid(torch.tensor(-2.0)).item(), places=6)
 
 
 class TestPadicMultiHeadAttention(unittest.TestCase):

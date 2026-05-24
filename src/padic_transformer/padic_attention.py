@@ -93,10 +93,11 @@ class SoftPadicValuation(nn.Module):
         p: int,
         r: int,
         d_digit: int = 16,
-        temperature: float = 4.0,
+        temperature: float = 1.0,
         learn_temp: bool = True,
         eps: float = 1e-6,
         diversity_weight: float = 0.01,
+        temperature_decay: float = 0.05,
     ) -> None:
         super().__init__()
         if p < 2:
@@ -113,14 +114,14 @@ class SoftPadicValuation(nn.Module):
         self.d_digit = d_digit
         self.eps = eps
         self.diversity_weight = diversity_weight
+        self.temperature_decay = temperature_decay
 
         self.digit_embeddings = nn.ModuleList([nn.Embedding(p, d_digit) for _ in range(r)])
         if learn_temp:
             self.log_temperature = nn.Parameter(torch.full((r,), math.log(temperature)))
             with torch.no_grad():
-                decay = 0.15
                 for idx in range(r):
-                    self.log_temperature[idx] = math.log(temperature) - idx * decay
+                    self.log_temperature[idx] = math.log(temperature) - idx * temperature_decay
         else:
             self.register_buffer("log_temperature", torch.full((r,), math.log(temperature)))
         self.prefix_weights = nn.Parameter(torch.ones(r))
@@ -154,9 +155,10 @@ class SoftPadicValuation(nn.Module):
         emb = self.digit_embeddings[position]
         ea = emb(digits_a)
         eb = emb(digits_b)
-        sq_dist = ((ea - eb) ** 2).sum(dim=-1)
-        tau = self.log_temperature[position].exp().clamp(min=0.01, max=50.0)
-        return torch.exp(-tau * sq_dist)
+        tau = self.log_temperature[position].exp().clamp(min=0.01, max=20.0)
+        cos_sim = F.cosine_similarity(ea, eb, dim=-1)
+        similarity = 0.5 * (1.0 + cos_sim)
+        return torch.sigmoid(tau * (similarity - 0.5))
 
     def forward(self, digits_a: torch.Tensor, digits_b: torch.Tensor) -> torch.Tensor:
         if digits_a.shape != digits_b.shape:
@@ -164,13 +166,13 @@ class SoftPadicValuation(nn.Module):
         if digits_a.shape[-1] != self.r:
             raise ValueError(f"Last dimension must be r={self.r}")
 
-        log_matches = []
+        prefixes = []
+        running = None
         for pos in range(self.r):
             match = self._soft_match_at_position(digits_a[..., pos], digits_b[..., pos], pos)
-            log_matches.append(torch.log(match.clamp_min(self.eps)))
-        log_match_tensor = torch.stack(log_matches, dim=-1)
-        log_prefix = torch.cumsum(log_match_tensor, dim=-1)
-        prefix = torch.exp(log_prefix)
+            running = match if running is None else running * match
+            prefixes.append(running)
+        prefix = torch.stack(prefixes, dim=-1)
         weights = F.softplus(self.prefix_weights)
         soft_val = (prefix * weights).sum(dim=-1)
         return soft_val / (weights.sum() + self.eps)
@@ -186,14 +188,15 @@ class SoftPadicValuation(nn.Module):
             raise ValueError(f"digits must have shape [batch, seq, r={self.r}]")
 
         batch, seq, _ = digits.shape
-        weights = F.softplus(self.prefix_weights)
+        weights = F.softplus(self.prefix_weights).to(torch.float32)
         running_log = digits.new_zeros((batch, seq, seq), dtype=torch.float32)
         soft_val = digits.new_zeros((batch, seq, seq), dtype=torch.float32)
         for pos in range(self.r):
-            emb = self.digit_embeddings[pos](digits[..., pos])
-            sq_dist = ((emb.unsqueeze(2) - emb.unsqueeze(1)) ** 2).sum(dim=-1)
-            tau = self.log_temperature[pos].exp().clamp(min=0.01, max=50.0)
-            running_log = running_log + (-tau * sq_dist).clamp_min(math.log(self.eps))
+            emb = self.digit_embeddings[pos](digits[..., pos]).to(torch.float32)
+            tau = self.log_temperature[pos].exp().clamp(min=0.01, max=20.0).to(torch.float32)
+            cos_sim = F.cosine_similarity(emb.unsqueeze(2), emb.unsqueeze(1), dim=-1)
+            similarity = 0.5 * (1.0 + cos_sim)
+            running_log = running_log + F.logsigmoid(tau * (similarity - 0.5))
             soft_val = soft_val + torch.exp(running_log) * weights[pos]
         return soft_val / (weights.sum() + self.eps)
 
@@ -212,12 +215,17 @@ class PadicAttentionHead(nn.Module):
     ) -> None:
         super().__init__()
         self.valuation = SoftPadicValuation(p=p, r=r, d_digit=d_digit)
-        self.logit_scale = nn.Parameter(torch.tensor(5.0))
+        self.logit_scale = nn.Parameter(torch.tensor(8.0))
         self.query_proj = nn.Linear(d_model, d_head)
         self.key_proj = nn.Linear(d_model, d_head)
-        self.padic_gate = nn.Parameter(torch.tensor(0.0))
+        self.padic_gate = nn.Parameter(torch.tensor(-2.0))
+        self.gate_regularization_weight = 0.001
         self.value_proj = nn.Linear(d_model, d_head)
         self.dropout = nn.Dropout(dropout)
+
+    def gate_regularization_loss(self) -> torch.Tensor:
+        gate = self.padic_gate.sigmoid()
+        return self.gate_regularization_weight * (gate - 0.5).square()
 
     def forward(
         self,
@@ -232,11 +240,17 @@ class PadicAttentionHead(nn.Module):
             raise ValueError("digits and x must have matching batch/seq dimensions")
 
         raw = self.valuation.pairwise(digits).to(dtype=x.dtype)
-        scale = self.logit_scale.clamp(0.1, 25.0)
+        scale = self.logit_scale.clamp(0.1, 20.0)
         q = self.query_proj(x)
         k = self.key_proj(x)
         content_logits = torch.bmm(q, k.transpose(1, 2)) / math.sqrt(q.shape[-1])
-        logits = content_logits + self.padic_gate.sigmoid() * (scale * raw)
+        content_std = content_logits.std(dim=-1, keepdim=True).clamp_min(1e-3)
+        content_logits = content_logits / content_std
+        padic_logits = scale * raw
+        padic_logits = padic_logits - padic_logits.mean(dim=-1, keepdim=True)
+        padic_std = padic_logits.std(dim=-1, keepdim=True).clamp_min(1e-3)
+        padic_logits = padic_logits / padic_std
+        logits = content_logits + self.padic_gate.sigmoid() * padic_logits
 
         if key_padding_mask is not None:
             logits = logits.masked_fill(key_padding_mask.unsqueeze(1), torch.finfo(logits.dtype).min)

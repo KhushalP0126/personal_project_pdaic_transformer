@@ -352,16 +352,42 @@ def _make_optimizer(
     device: torch.device,
     optimizer_kwargs: dict[str, float],
 ) -> torch.optim.Optimizer:
+    base_params = []
+    padic_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if (
+            ".valuation." in name
+            or name.endswith("padic_gate")
+            or name.endswith("logit_scale")
+        ):
+            padic_params.append(param)
+        else:
+            base_params.append(param)
+
+    params: list[dict[str, object]]
+    if padic_params:
+        params = [
+            {"params": base_params},
+            {
+                "params": padic_params,
+                "lr": float(optimizer_kwargs["lr"]) * 3.0,
+            },
+        ]
+    else:
+        params = [{"params": base_params}]
+
     if device.type == "cuda":
         try:
             return torch.optim.AdamW(
-                model.parameters(),
+                params,
                 fused=True,
                 **optimizer_kwargs,
             )
         except (TypeError, RuntimeError):
-            return torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
-    return torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
+            return torch.optim.AdamW(params, **optimizer_kwargs)
+    return torch.optim.AdamW(params, **optimizer_kwargs)
 
 
 def train(

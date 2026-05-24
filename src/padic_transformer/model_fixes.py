@@ -81,18 +81,26 @@ def _temperature_modules(model: nn.Module) -> list[nn.Module]:
 
 
 def compute_diversity_regularization(model: nn.Module) -> torch.Tensor:
-    """Sum all temperature diversity penalties in a model."""
+    """Sum auxiliary regularizers exposed by model submodules."""
     modules = _temperature_modules(model)
-    if not modules:
-        first_param = next(model.parameters(), None)
-        if first_param is None:
-            return torch.tensor(0.0)
-        return first_param.new_tensor(0.0)
+    gate_modules = [
+        module
+        for module in model.modules()
+        if hasattr(module, "gate_regularization_loss")
+    ]
 
     loss = None
     for module in modules:
         term = module.temperature_diversity_loss()
         loss = term if loss is None else loss + term
+    for module in gate_modules:
+        term = module.gate_regularization_loss()
+        loss = term if loss is None else loss + term
+    if loss is None:
+        first_param = next(model.parameters(), None)
+        if first_param is None:
+            return torch.tensor(0.0)
+        return first_param.new_tensor(0.0)
     assert loss is not None
     return loss
 
