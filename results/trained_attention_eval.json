@@ -1,0 +1,49 @@
+{
+  "checkpoint": "results/checkpoints/best.pt",
+  "dataset": "hierarchy_rules",
+  "device": "cpu",
+  "variants": {
+    "random": {
+      "attention_sparsity": 0.00016641616821289062,
+      "attn_gap_depth1": 0.0020691140089184046,
+      "attn_gap_depth2": 0.005222519510425627,
+      "attn_gap_depth4": 0.0223190828692168,
+      "auroc": 0.48580843665228396,
+      "diff_cluster_attention": 0.030057877069339156,
+      "f1": 0.44622792937399675,
+      "hierarchy_gap": 0.0020691140089184046,
+      "hierarchy_variant": "random",
+      "padic_attention_corr": 0.08065989334136248,
+      "padic_gate": 0.12081477791070938,
+      "same_cluster_attention": 0.0321269896812737
+    },
+    "shuffled": {
+      "attention_sparsity": 0.0005634625704260543,
+      "attn_gap_depth1": 0.003993287187768146,
+      "attn_gap_depth2": 0.010566650540567935,
+      "attn_gap_depth4": 0.01684347027912736,
+      "auroc": 0.473246308737051,
+      "diff_cluster_attention": 0.029663544613867998,
+      "f1": 0.44580152671755724,
+      "hierarchy_gap": 0.003993287187768146,
+      "hierarchy_variant": "shuffled",
+      "padic_attention_corr": 0.18584333173930645,
+      "padic_gate": 0.12081477791070938,
+      "same_cluster_attention": 0.03365683136507869
+    },
+    "true": {
+      "attention_sparsity": 0.0005445480437629158,
+      "attn_gap_depth1": 0.00789604295277968,
+      "attn_gap_depth2": 0.012928717653267086,
+      "attn_gap_depth4": 0.014812262961640954,
+      "auroc": 0.5210916307098512,
+      "diff_cluster_attention": 0.028560607926920056,
+      "f1": 0.4080717488789238,
+      "hierarchy_gap": 0.00789604295277968,
+      "hierarchy_variant": "true",
+      "padic_attention_corr": 0.2986222133040428,
+      "padic_gate": 0.12081477791070938,
+      "same_cluster_attention": 0.036456650123000145
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "batch_size": 64,
+  "batches_per_p": 4,
+  "device": "cpu",
+  "generated_utc": "2026-05-24T03:26:19Z",
+  "runs": [
+    {
+      "anomaly_d_p": 0.6209506988525391,
+      "attention_sparsity_pct": 0.0,
+      "batches": 4,
+      "diff_cluster_attention": 0.02748551731929183,
+      "hierarchy_gap": 0.005843712016940117,
+      "latency_ms": 813.1525462376885,
+      "normal_d_p": 0.6097432971000671,
+      "p": 2,
+      "padic_attention_corr": 0.6335211843252182,
+      "padic_gate": 0.11920291930437088,
+      "same_cluster_attention": 0.033329229801893234
+    },
+    {
+      "anomaly_d_p": 0.6366588324308395,
+      "attention_sparsity_pct": 0.0,
+      "batches": 4,
+      "diff_cluster_attention": 0.028409198857843876,
+      "hierarchy_gap": 0.00505599589087069,
+      "latency_ms": 784.6229325514287,
+      "normal_d_p": 0.6264691054821014,
+      "p": 3,
+      "padic_attention_corr": 0.4187232777476311,
+      "padic_gate": 0.11920291930437088,
+      "same_cluster_attention": 0.0334651954472065
+    },
+    {
+      "anomaly_d_p": 0.7694879472255707,
+      "attention_sparsity_pct": 0.0,
+      "batches": 4,
+      "diff_cluster_attention": 0.029055224731564522,
+      "hierarchy_gap": 0.00604999391362071,
+      "latency_ms": 1499.2088414146565,
+      "normal_d_p": 0.7619868516921997,
+      "p": 5,
+      "padic_attention_corr": 0.3379933312535286,
+      "padic_gate": 0.11920291930437088,
+      "same_cluster_attention": 0.035105218179523945
+    },
+    {
+      "anomaly_d_p": 0.7760831415653229,
+      "attention_sparsity_pct": 0.0,
+      "batches": 4,
+      "diff_cluster_attention": 0.028999329544603825,
+      "hierarchy_gap": 0.006248999736271799,
+      "latency_ms": 911.8955495068803,
+      "normal_d_p": 0.7641512900590897,
+      "p": 7,
+      "padic_attention_corr": 0.34109626710414886,
+      "padic_gate": 0.11920291930437088,
+      "same_cluster_attention": 0.03524832986295223
+    }
+  ],
+  "window_size": 32
+}
