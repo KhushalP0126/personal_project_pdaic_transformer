@@ -149,7 +149,7 @@ class HierarchyRuleDataset(Dataset):
             return base, True
 
         warnings.warn(
-            "HierarchyRuleDataset: failed to create a non-trivial subtree-jump anomaly after several attempts; "
+            "HierarchyRuleDataset: failed to create a non-trivial subtree-jump anomaly; "
             "returning the original window with a normal label.",
             RuntimeWarning,
             stacklevel=2,

@@ -91,6 +91,42 @@ class TestPadicAttentionHead(unittest.TestCase):
         gate = float(metrics["padic_gate"].item())
         self.assertAlmostEqual(gate, 0.5, places=6)
 
+    def test_attention_seq_len_one_is_finite(self) -> None:
+        head = PadicAttentionHead(p=3, r=8, d_model=32, d_head=16, d_digit=8)
+        digits = torch.randint(0, 3, (2, 1, 8))
+        x = torch.randn(2, 1, 32)
+        out, weights = head(digits, x)
+        self.assertTrue(torch.isfinite(out).all().item())
+        self.assertTrue(torch.isfinite(weights).all().item())
+
+    def test_attention_rejects_fully_padded_sample(self) -> None:
+        head = PadicAttentionHead(p=3, r=8, d_model=32, d_head=16, d_digit=8)
+        digits = torch.randint(0, 3, (2, 5, 8))
+        x = torch.randn(2, 5, 32)
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[0, :] = True
+
+        with self.assertRaises(ValueError):
+            head(digits, x, key_padding_mask=mask)
+
+    def test_attention_weights_renormalize_after_key_mask(self) -> None:
+        head = PadicAttentionHead(p=3, r=8, d_model=32, d_head=16, d_digit=8)
+        digits = torch.randint(0, 3, (2, 5, 8))
+        x = torch.randn(2, 5, 32)
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[:, -2:] = True
+
+        _, weights = head(digits, x, key_padding_mask=mask)
+
+        valid_queries = ~mask
+        row_sums = weights.sum(dim=-1)
+        torch.testing.assert_close(
+            row_sums[valid_queries],
+            torch.ones_like(row_sums[valid_queries]),
+            atol=1e-6,
+            rtol=0.0,
+        )
+
 
 class TestPadicMultiHeadAttention(unittest.TestCase):
     def test_output_shape(self) -> None:
@@ -112,15 +148,14 @@ class TestPadicMultiHeadAttention(unittest.TestCase):
 
 
 class TestAnomalyHead(unittest.TestCase):
-    def test_all_padded_samples_return_finite_zero_pooled_features(self) -> None:
+    def test_all_padded_samples_are_rejected(self) -> None:
         from padic_transformer.model import AnomalyHead
 
         head = AnomalyHead(d_model=16, hidden_dim=8)
         hidden = torch.randn(2, 4, 16)
         mask = torch.ones(2, 4, dtype=torch.bool)
-        pooled = head.pool_hidden(hidden, padding_mask=mask)
-        self.assertTrue(torch.isfinite(pooled).all().item())
-        torch.testing.assert_close(pooled, torch.zeros_like(pooled))
+        with self.assertRaises(ValueError):
+            head.pool_hidden(hidden, padding_mask=mask)
 
 
 class TestPadicTransformerLayer(unittest.TestCase):

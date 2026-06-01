@@ -532,7 +532,7 @@ class TestTrainingSmoke(unittest.TestCase):
         hensel = generate_clustered_hensel_dataset(cfg)
         realistic_cfg = RealisticDatasetConfig(
             window_size=8,
-            attack_fraction=0.2,
+            attack_fraction=0.05,
             idle_fraction=0.5,
             seed=12,
         )
@@ -617,6 +617,7 @@ class TestTrainingSmoke(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
                 warnings.simplefilter("ignore", RuntimeWarning)
                 RealisticBusDataset(hensel, realistic_cfg, n_samples=8)
 

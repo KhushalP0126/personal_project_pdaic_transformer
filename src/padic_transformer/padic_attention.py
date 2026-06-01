@@ -34,6 +34,10 @@ def _safe_masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return masked.mean()
 
 
+def _finite_or_zero(value: torch.Tensor) -> torch.Tensor:
+    return torch.where(torch.isfinite(value), value, value.new_tensor(0.0))
+
+
 def _attention_hierarchy_metrics(
     weights: torch.Tensor,
     digits: torch.Tensor,
@@ -81,7 +85,8 @@ def _attention_hierarchy_metrics(
         same_depth_attention = _safe_masked_mean(weights, same_depth)
         diff_depth_attention = _safe_masked_mean(weights, diff_depth)
         metrics[f"attn_gap_depth{depth}"] = same_depth_attention - diff_depth_attention
-    metrics["attention_sparsity"] = _attention_sparsity(weights.masked_select(valid_pairs))
+    metrics = {key: _finite_or_zero(value) for key, value in metrics.items()}
+    metrics["attention_sparsity"] = _finite_or_zero(_attention_sparsity(weights.masked_select(valid_pairs)))
     return metrics
 
 
@@ -239,6 +244,14 @@ class PadicAttentionHead(nn.Module):
             raise ValueError("digits and x must be [batch, seq, ...]")
         if digits.shape[:2] != x.shape[:2]:
             raise ValueError("digits and x must have matching batch/seq dimensions")
+        if key_padding_mask is not None:
+            if key_padding_mask.shape != digits.shape[:2]:
+                raise ValueError(
+                    f"key_padding_mask must have shape {tuple(digits.shape[:2])}, "
+                    f"got {tuple(key_padding_mask.shape)}"
+                )
+            if bool(key_padding_mask.all(dim=1).any().item()):
+                raise ValueError("fully padded samples are not supported")
 
         raw = self.valuation.pairwise(digits).to(dtype=x.dtype)
         scale = self.logit_scale.clamp(0.1, 20.0)
@@ -258,7 +271,9 @@ class PadicAttentionHead(nn.Module):
 
         weights = torch.softmax(logits, dim=-1)
         if key_padding_mask is not None:
-            weights = weights * (~key_padding_mask).unsqueeze(-1).to(weights.dtype)
+            key_valid = (~key_padding_mask).unsqueeze(1).to(weights.dtype)
+            weights = weights * key_valid
+            weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1e-9)
         values = self.value_proj(x)
         out = torch.bmm(weights, values)
         out = self.dropout(out)

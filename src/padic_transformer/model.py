@@ -79,21 +79,26 @@ class AnomalyHead(nn.Module):
         padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if padding_mask is not None:
+            if padding_mask.shape != hidden.shape[:2]:
+                raise ValueError(
+                    f"padding_mask must have shape {tuple(hidden.shape[:2])}, "
+                    f"got {tuple(padding_mask.shape)}"
+                )
             valid = (~padding_mask).unsqueeze(-1).to(hidden.dtype)
-            has_valid = valid.sum(dim=1) > 0
+            valid_counts = valid.sum(dim=1)
+            if bool((valid_counts.squeeze(-1) == 0).any().item()):
+                raise ValueError("fully padded samples are not supported")
             mean_pool = (hidden * valid).sum(dim=1) / valid.sum(dim=1).clamp(min=1)
-            scores = self.token_score(hidden).masked_fill(padding_mask.unsqueeze(-1), -1e9)
+            scores = self.token_score(hidden).masked_fill(
+                padding_mask.unsqueeze(-1),
+                torch.finfo(hidden.dtype).min,
+            )
         else:
-            has_valid = None
             mean_pool = hidden.mean(dim=1)
             scores = self.token_score(hidden)
 
         weights = torch.softmax(scores, dim=1)
         attn_pool = (weights * hidden).sum(dim=1)
-        if has_valid is not None:
-            zeros = torch.zeros_like(attn_pool)
-            attn_pool = torch.where(has_valid, attn_pool, zeros)
-            mean_pool = torch.where(has_valid, mean_pool, torch.zeros_like(mean_pool))
         return torch.cat([mean_pool, attn_pool], dim=-1)
 
     def forward(

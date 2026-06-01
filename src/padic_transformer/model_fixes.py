@@ -141,8 +141,19 @@ def quantize_dynamic_model(model: nn.Module) -> nn.Module:
         if engine in (None, "none", "NoQEngine"):
             supported = getattr(torch.backends.quantized, "supported_engines", [])
             if supported:
-                torch.backends.quantized.engine = supported[0]
-    return torch.ao.quantization.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8)
+                preferred = ("x86", "fbgemm", "onednn", "qnnpack")
+                for candidate in preferred:
+                    if candidate in supported:
+                        torch.backends.quantized.engine = candidate
+                        break
+                else:
+                    torch.backends.quantized.engine = supported[0]
+    supported = getattr(torch.backends.quantized, "supported_engines", [])
+    if supported == ["qnnpack"]:
+        return model
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return torch.ao.quantization.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8)
 
 
 class StreamingWindowScorer:
