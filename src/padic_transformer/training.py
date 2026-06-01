@@ -401,7 +401,7 @@ def train(
     from .dataset_realistic import RealisticBusDataset, RealisticDatasetConfig, make_weighted_loss
     from .losses import AnomalyLoss
     from .model import PadicAnomalyDetector
-    from .ultrametric import generate_clustered_hensel_dataset
+    from .ultrametric import derive_seed, generate_clustered_hensel_dataset
     from torch.utils.data import DataLoader
 
     print(f"\n{'='*60}")
@@ -432,7 +432,7 @@ def train(
             samples=config.samples,
             classes=config.classes,
             tokens_per_class=config.tokens_per_class,
-            seed=config.seed + 999_999,
+            seed=derive_seed(config.seed, "val_hierarchy_hensel"),
             triplets=benchmark_cfg.triplets,
             distance_pairs=benchmark_cfg.distance_pairs,
         )
@@ -454,7 +454,7 @@ def train(
                 subtree_depth=config.rule_subtree_depth,
                 stay_steps=config.rule_stay_steps,
                 attack_tokens=config.rule_attack_tokens,
-                seed=config.seed ^ 0xA11CE,
+                seed=derive_seed(config.seed, "val_hierarchy_rule"),
             ),
             n_samples=config.n_val,
         )
@@ -485,7 +485,7 @@ def train(
             samples=config.samples,
             classes=config.classes,
             tokens_per_class=config.tokens_per_class,
-            seed=config.seed + 999_999,
+            seed=derive_seed(config.seed, "val_realistic_hensel"),
             triplets=benchmark_cfg.triplets,
             distance_pairs=benchmark_cfg.distance_pairs,
         )
@@ -497,7 +497,7 @@ def train(
             attack_min_len=config.attack_min_len,
             attack_max_len=config.attack_max_len,
             attack_kinds=config.attack_kinds,
-            seed=config.seed,
+            seed=derive_seed(config.seed, "val_realistic_dataset"),
         )
         train_ds = RealisticBusDataset(train_hensel, realistic_cfg, n_samples=config.n_train)
         val_ds = RealisticBusDataset(val_hensel, realistic_cfg, n_samples=config.n_val)

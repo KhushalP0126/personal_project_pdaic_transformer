@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 
 AttackKind = Literal["cross_class", "stuck_at", "burst", "ordering"]
+ATTACK_RETRY_LIMIT = 12
 
 
 @dataclass(frozen=True)
@@ -35,10 +36,14 @@ class RealisticDatasetConfig:
             raise ValueError(f"idle_fraction must be in [0, 1), got {self.idle_fraction}")
         if self.attack_min_len < 1:
             raise ValueError(f"attack_min_len must be >= 1, got {self.attack_min_len}")
-        eff_max = min(self.attack_max_len, self.window_size)
-        if self.attack_min_len > eff_max:
+        if self.attack_max_len > self.window_size:
             raise ValueError(
-                f"attack_min_len ({self.attack_min_len}) > effective attack_max_len ({eff_max})"
+                f"attack_max_len ({self.attack_max_len}) cannot exceed "
+                f"window_size ({self.window_size})"
+            )
+        if self.attack_min_len > self.attack_max_len:
+            raise ValueError(
+                f"attack_min_len ({self.attack_min_len}) > attack_max_len ({self.attack_max_len})"
             )
         if not self.attack_kinds:
             raise ValueError("attack_kinds must be non-empty")
@@ -200,20 +205,41 @@ class RealisticBusDataset(Dataset):
 
         attack_starts = torch.randint(0, n_tokens - window + 1, (n_attack,), generator=rng)
         attack_windows = []
+        attack_successes: list[bool] = []
         self.attack_kind_counts: dict[str, int] = {k: 0 for k in cfg.attack_kinds}
 
         for start in attack_starts:
-            win, kind = self._inject_attack(
+            win, kind, success = self._inject_attack(
                 int(start.item()), window, token_digits, token_labels, rng
             )
             attack_windows.append(win)
-            self.attack_kind_counts[kind] += 1
+            attack_successes.append(success)
+            if success:
+                self.attack_kind_counts[kind] += 1
+
+        attack_labels = torch.tensor(
+            [float(success) for success in attack_successes],
+            dtype=torch.float32,
+        )
+        successful_attacks = int(attack_labels.sum().item())
+        if successful_attacks == 0:
+            raise ValueError(
+                "failed to generate any non-trivial realistic attacks; "
+                "decrease idle_fraction, add attack kinds, or increase class diversity"
+            )
+        if successful_attacks < n_attack:
+            warnings.warn(
+                f"RealisticBusDataset: generated {successful_attacks}/{n_attack} requested attacks; "
+                "failed attack attempts were kept as normal samples.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         all_windows = torch.cat([normal_windows, torch.stack(attack_windows)], dim=0)
         all_labels = torch.cat(
             [
                 torch.zeros(n_normal, dtype=torch.float32),
-                torch.ones(n_attack, dtype=torch.float32),
+                attack_labels,
             ]
         )
         perm = torch.randperm(n_samples, generator=rng)
@@ -236,11 +262,17 @@ class RealisticBusDataset(Dataset):
         token_digits: torch.Tensor,
         token_labels: torch.Tensor,
         rng: torch.Generator,
-    ) -> tuple[torch.Tensor, AttackKind]:
+    ) -> tuple[torch.Tensor, AttackKind, bool]:
         base = token_digits[start : start + window].clone()
-        eff_max = min(self.cfg.attack_max_len, window)
-        for _ in range(12):
-            attack_len = int(torch.randint(self.cfg.attack_min_len, eff_max + 1, (1,), generator=rng).item())
+        for _ in range(ATTACK_RETRY_LIMIT):
+            attack_len = int(
+                torch.randint(
+                    self.cfg.attack_min_len,
+                    self.cfg.attack_max_len + 1,
+                    (1,),
+                    generator=rng,
+                ).item()
+            )
             inject_pos = int(torch.randint(0, window - attack_len + 1, (1,), generator=rng).item())
 
             kind_idx = int(torch.randint(0, len(self.cfg.attack_kinds), (1,), generator=rng).item())
@@ -257,12 +289,32 @@ class RealisticBusDataset(Dataset):
             candidate = base.clone()
             if kind == "cross_class":
                 candidate = _attack_cross_class(
-                    candidate, inject_pos, attack_len, token_digits, token_labels, majority_label, rng
+                    candidate,
+                    inject_pos,
+                    attack_len,
+                    token_digits,
+                    token_labels,
+                    majority_label,
+                    rng,
                 )
             elif kind == "stuck_at":
-                candidate = _attack_stuck_at(candidate, inject_pos, attack_len, token_digits, token_labels, rng)
+                candidate = _attack_stuck_at(
+                    candidate,
+                    inject_pos,
+                    attack_len,
+                    token_digits,
+                    token_labels,
+                    rng,
+                )
             elif kind == "burst":
-                candidate = _attack_burst(candidate, inject_pos, attack_len, token_digits, token_labels, rng)
+                candidate = _attack_burst(
+                    candidate,
+                    inject_pos,
+                    attack_len,
+                    token_digits,
+                    token_labels,
+                    rng,
+                )
             elif kind == "ordering":
                 candidate = _attack_ordering(candidate, inject_pos, attack_len, rng)
 
@@ -270,15 +322,15 @@ class RealisticBusDataset(Dataset):
                 candidate[inject_pos : inject_pos + attack_len],
                 base[inject_pos : inject_pos + attack_len],
             ):
-                return candidate, kind
+                return candidate, kind, True
 
         warnings.warn(
             "RealisticBusDataset._inject_attack: failed to generate a non-trivial attack after several attempts. "
-            "Returning the original window.",
+            "Returning the original window with a normal label.",
             RuntimeWarning,
             stacklevel=2,
         )
-        return base, self.cfg.attack_kinds[0]
+        return base, self.cfg.attack_kinds[0], False
 
     def __len__(self) -> int:
         return self.n_samples

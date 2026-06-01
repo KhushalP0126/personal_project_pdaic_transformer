@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import warnings
 
 import torch
@@ -20,6 +21,13 @@ class HenselDataset:
     cluster_depth: int
 
 
+def derive_seed(base_seed: int, stream: str) -> int:
+    """Derive a deterministic 63-bit child seed for independent dataset streams."""
+    payload = f"{base_seed}:{stream}".encode("utf-8")
+    digest = hashlib.blake2b(payload, digest_size=8).digest()
+    return int.from_bytes(digest, "little") & ((1 << 63) - 1)
+
+
 def generate_clustered_hensel_dataset(
     config: BenchmarkConfig,
     *,
@@ -32,6 +40,11 @@ def generate_clustered_hensel_dataset(
     synthetic ultrametric latent structure.
     """
     config.validate()
+    if config.samples < config.classes:
+        raise ValueError(
+            f"samples ({config.samples}) must be at least classes ({config.classes}) "
+            "to guarantee class coverage"
+        )
     resolved_device = torch.device(device)
     generator = torch.Generator(device=resolved_device)
     generator.manual_seed(config.seed + config.p * 1000 + config.r)
@@ -97,6 +110,39 @@ def generate_clustered_hensel_dataset(
             ).item()
         )
         current_label = raw_next + (1 if raw_next >= current_label else 0)
+
+    class_counts = torch.bincount(labels, minlength=config.classes)
+    missing_classes = (class_counts == 0).nonzero(as_tuple=True)[0]
+    if missing_classes.numel() > 0:
+        for missing_class in missing_classes.tolist():
+            surplus_classes = (class_counts > 1).nonzero(as_tuple=True)[0]
+            if surplus_classes.numel() == 0:
+                raise RuntimeError(
+                    "unable to guarantee class coverage without removing another class"
+                )
+            surplus_pick = int(
+                torch.randint(
+                    0,
+                    surplus_classes.numel(),
+                    (1,),
+                    device=resolved_device,
+                    generator=generator,
+                ).item()
+            )
+            source_class = int(surplus_classes[surplus_pick].item())
+            source_positions = (labels == source_class).nonzero(as_tuple=True)[0]
+            position_pick = int(
+                torch.randint(
+                    0,
+                    source_positions.numel(),
+                    (1,),
+                    device=resolved_device,
+                    generator=generator,
+                ).item()
+            )
+            labels[source_positions[position_pick]] = missing_class
+            class_counts[source_class] -= 1
+            class_counts[missing_class] += 1
 
     digits = torch.empty((config.samples, config.r), dtype=torch.int64, device=resolved_device)
     for class_id in range(config.classes):

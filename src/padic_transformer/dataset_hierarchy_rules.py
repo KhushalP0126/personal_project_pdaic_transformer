@@ -8,6 +8,8 @@ import warnings
 import torch
 from torch.utils.data import Dataset
 
+ATTACK_RETRY_LIMIT = 12
+
 
 @dataclass(frozen=True)
 class HierarchyRuleDatasetConfig:
@@ -58,12 +60,30 @@ class HierarchyRuleDataset(Dataset):
             raise ValueError("n_samples must produce at least one normal and one attack sample")
 
         normal_windows = torch.stack([self._sample_normal_window(rng) for _ in range(n_normal)])
-        attack_windows = torch.stack([self._sample_attack_window(rng) for _ in range(n_attack)])
+        attack_results = [self._sample_attack_window(rng) for _ in range(n_attack)]
+        attack_windows = torch.stack([window for window, _ in attack_results])
+        attack_labels = torch.tensor(
+            [float(success) for _, success in attack_results],
+            dtype=torch.float32,
+        )
+        successful_attacks = int(attack_labels.sum().item())
+        if successful_attacks == 0:
+            raise ValueError(
+                "failed to generate any non-trivial hierarchy-rule attacks; "
+                "reduce subtree_depth or increase class diversity"
+            )
+        if successful_attacks < n_attack:
+            warnings.warn(
+                f"HierarchyRuleDataset: generated {successful_attacks}/{n_attack} requested attacks; "
+                "failed attack attempts were kept as normal samples.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         all_windows = torch.cat([normal_windows, attack_windows], dim=0)
         all_labels = torch.cat(
             [
                 torch.zeros(n_normal, dtype=torch.float32),
-                torch.ones(n_attack, dtype=torch.float32),
+                attack_labels,
             ]
         )
         perm = torch.randperm(n_samples, generator=rng)
@@ -103,33 +123,44 @@ class HierarchyRuleDataset(Dataset):
             remaining -= segment_len
         return torch.cat(pieces, dim=0)
 
-    def _sample_attack_window(self, rng: torch.Generator) -> torch.Tensor:
+    def _sample_attack_window(self, rng: torch.Generator) -> tuple[torch.Tensor, bool]:
         base = self._sample_normal_window(rng)
         max_start = self.cfg.window_size - self.cfg.attack_tokens
-        for _ in range(12):
+        for _ in range(ATTACK_RETRY_LIMIT):
             start = int(torch.randint(0, max_start + 1, (1,), generator=rng).item())
             before = base[start : start + self.cfg.attack_tokens].clone()
             prefix = tuple(int(v) for v in before[0, : self.cfg.subtree_depth].tolist())
             candidate_groups = [
                 idx
                 for idx, group in enumerate(self._prefix_groups)
-                if tuple(int(v) for v in self.hensel_data.token_digits[group[0], : self.cfg.subtree_depth].tolist()) != prefix
+                if tuple(
+                    int(v)
+                    for v in self.hensel_data.token_digits[
+                        group[0], : self.cfg.subtree_depth
+                    ].tolist()
+                )
+                != prefix
             ]
             if not candidate_groups:
                 break
             group_pick = int(torch.randint(0, len(candidate_groups), (1,), generator=rng).item())
-            replacement = self._sample_group_tokens(candidate_groups[group_pick], self.cfg.attack_tokens, rng)
+            replacement = self._sample_group_tokens(
+                candidate_groups[group_pick],
+                self.cfg.attack_tokens,
+                rng,
+            )
             if torch.equal(replacement, before):
                 continue
             base[start : start + self.cfg.attack_tokens] = replacement
-            return base
+            return base, True
 
         warnings.warn(
-            "HierarchyRuleDataset: failed to create a non-trivial subtree-jump anomaly after several attempts.",
+            "HierarchyRuleDataset: failed to create a non-trivial subtree-jump anomaly after several attempts; "
+            "returning the original window with a normal label.",
             RuntimeWarning,
             stacklevel=2,
         )
-        return base
+        return base, False
 
     def __len__(self) -> int:
         return self.n_samples

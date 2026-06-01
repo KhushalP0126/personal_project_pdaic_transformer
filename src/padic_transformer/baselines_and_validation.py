@@ -68,8 +68,18 @@ def _remap_hierarchy_windows(
     # exact entries. Keep the explicit check to avoid silent bad remaps if this
     # helper is changed later.
     remap_indices = torch.searchsorted(unique_ids, flat_ids)
-    if not bool(torch.equal(unique_ids[remap_indices], flat_ids)):
-        raise RuntimeError("hierarchy remap invariant failed: token id missing from vocabulary")
+    in_bounds = remap_indices < unique_ids.numel()
+    exact_hit = torch.zeros_like(in_bounds, dtype=torch.bool)
+    exact_hit[in_bounds] = unique_ids[remap_indices[in_bounds]] == flat_ids[in_bounds]
+    if not bool(torch.all(exact_hit).item()):
+        bad_ids = flat_ids[~exact_hit]
+        example_ids = bad_ids[:8].detach().cpu().tolist()
+        raise RuntimeError(
+            "hierarchy remap invariant failed: token id missing from vocabulary; "
+            f"variant={variant}, p={p}, seed={seed}, windows_shape={tuple(windows.shape)}, "
+            f"flat_count={flat_ids.numel()}, unique_count={unique_ids.numel()}, "
+            f"bad_count={bad_ids.numel()}, bad_examples={example_ids}"
+        )
     remapped_ids = remapped_vocab[remap_indices]
     remapped_digits = int64_to_digits(remapped_ids, p=p, r=windows.shape[-1]).reshape_as(windows)
     return remapped_digits

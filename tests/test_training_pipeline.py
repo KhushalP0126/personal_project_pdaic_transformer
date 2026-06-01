@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import warnings
 from unittest.mock import patch
 import sys
 from pathlib import Path
@@ -124,7 +125,13 @@ class TestSyscallAnomalyDataset(unittest.TestCase):
         hensel = type("DummyHensel", (), {"token_digits": tokens, "token_labels": labels})()
         ds = SyscallAnomalyDataset.__new__(SyscallAnomalyDataset)
         ds.hensel_data = hensel
-        ds.cfg = AnomalyDatasetConfig(window_size=4, attack_fraction=0.5, attack_min_len=1, attack_max_len=1, seed=0)
+        ds.cfg = AnomalyDatasetConfig(
+            window_size=4,
+            attack_fraction=0.5,
+            attack_min_len=1,
+            attack_max_len=1,
+            seed=0,
+        )
 
         randint_values = iter(
             [
@@ -138,12 +145,63 @@ class TestSyscallAnomalyDataset(unittest.TestCase):
             return next(randint_values)
 
         with patch("torch.randint", side_effect=fake_randint):
-            attacked = ds._inject_attack(start=0, window=4, rng=torch.Generator())
+            attacked, success = ds._inject_attack(start=0, window=4, rng=torch.Generator())
 
+        self.assertTrue(success)
         self.assertFalse(torch.equal(attacked[2], tokens[2]))
         matches = (attacked[2] == tokens).all(dim=1).nonzero(as_tuple=True)[0]
         self.assertGreater(matches.numel(), 0)
         self.assertNotEqual(int(labels[2].item()), int(labels[matches[0]].item()))
+
+    def test_failed_attack_is_not_labeled_positive(self) -> None:
+        tokens = torch.tensor(
+            [
+                [0, 0],
+                [0, 1],
+                [0, 2],
+                [0, 0],
+                [0, 1],
+                [0, 2],
+            ],
+            dtype=torch.int64,
+        )
+        labels = torch.zeros(tokens.shape[0], dtype=torch.int64)
+        hensel = type("DummyHensel", (), {"token_digits": tokens, "token_labels": labels})()
+        ds = SyscallAnomalyDataset.__new__(SyscallAnomalyDataset)
+        ds.hensel_data = hensel
+        ds.cfg = AnomalyDatasetConfig(window_size=4, attack_fraction=0.5, attack_min_len=1, attack_max_len=1, seed=0)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            attacked, success = ds._inject_attack(
+                start=0,
+                window=4,
+                rng=torch.Generator().manual_seed(0),
+            )
+
+        torch.testing.assert_close(attacked, tokens[:4])
+        self.assertFalse(success)
+
+    def test_dataset_rejects_when_no_attacks_can_be_generated(self) -> None:
+        tokens = torch.tensor([[0, 0], [0, 1], [0, 2], [0, 0], [0, 1], [0, 2]], dtype=torch.int64)
+        labels = torch.zeros(tokens.shape[0], dtype=torch.int64)
+        hensel = type("DummyHensel", (), {"token_digits": tokens, "token_labels": labels})()
+        acfg = AnomalyDatasetConfig(
+            window_size=4,
+            attack_fraction=0.5,
+            attack_min_len=1,
+            attack_max_len=1,
+            seed=0,
+        )
+        with self.assertRaises(ValueError):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                SyscallAnomalyDataset(hensel, acfg, n_samples=4)
+
+    def test_attack_max_len_cannot_exceed_window(self) -> None:
+        acfg = AnomalyDatasetConfig(window_size=4, attack_fraction=0.5, attack_min_len=1, attack_max_len=5)
+        with self.assertRaises(ValueError):
+            acfg.validate()
 
     def test_get_window_does_not_wrap(self) -> None:
         hensel = self._make_hensel()
@@ -467,6 +525,32 @@ class TestTrainingSmoke(unittest.TestCase):
             )
 
         self.assertFalse(torch.equal(attacked, base))
+
+    def test_realistic_failed_attack_is_not_labeled_positive(self) -> None:
+        from padic_transformer.dataset_realistic import RealisticBusDataset, RealisticDatasetConfig
+
+        cfg = BenchmarkConfig(p=3, r=8, samples=64, classes=4, tokens_per_class=16, seed=17)
+        hensel = generate_clustered_hensel_dataset(cfg)
+        realistic_cfg = RealisticDatasetConfig(
+            window_size=4,
+            attack_fraction=0.25,
+            idle_fraction=0.0,
+            attack_min_len=1,
+            attack_max_len=1,
+            attack_kinds=("ordering",),
+            seed=18,
+        )
+        with self.assertRaises(ValueError):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                RealisticBusDataset(hensel, realistic_cfg, n_samples=8)
+
+    def test_realistic_attack_max_len_cannot_exceed_window(self) -> None:
+        from padic_transformer.dataset_realistic import RealisticDatasetConfig
+
+        cfg = RealisticDatasetConfig(window_size=4, attack_min_len=1, attack_max_len=5)
+        with self.assertRaises(ValueError):
+            cfg.validate()
 
     def test_temperature_helpers_smoke(self) -> None:
         from padic_transformer.model_fixes import (

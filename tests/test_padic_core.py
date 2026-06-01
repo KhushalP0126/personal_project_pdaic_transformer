@@ -84,6 +84,19 @@ class PadicCoreTests(unittest.TestCase):
         self.assertEqual(count, 0)
         self.assertEqual(rate, 0.0)
 
+    def test_generated_dataset_covers_every_class(self) -> None:
+        config = BenchmarkConfig(
+            p=3,
+            r=8,
+            samples=16,
+            classes=16,
+            tokens_per_class=4,
+            seed=99,
+        )
+        dataset = generate_clustered_hensel_dataset(config)
+        class_counts = torch.bincount(dataset.token_labels, minlength=config.classes)
+        self.assertTrue(torch.all(class_counts > 0).item())
+
     def test_triplet_sampler_excludes_degenerate_rows(self) -> None:
         triplets = sample_distinct_triplet_indices(5, 1000, seed=123, device="cpu")
         self.assertTrue(torch.all(triplets[:, 0] != triplets[:, 1]).item())

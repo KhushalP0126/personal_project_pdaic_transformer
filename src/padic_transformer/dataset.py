@@ -9,7 +9,9 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from .config import BenchmarkConfig
-from .ultrametric import HenselDataset, generate_clustered_hensel_dataset
+from .ultrametric import HenselDataset, derive_seed, generate_clustered_hensel_dataset
+
+ATTACK_RETRY_LIMIT = 8
 
 
 @dataclass(frozen=True)
@@ -27,10 +29,14 @@ class AnomalyDatasetConfig:
             raise ValueError(f"attack_fraction must be in (0, 1), got {self.attack_fraction}")
         if self.attack_min_len < 1:
             raise ValueError(f"attack_min_len must be >= 1, got {self.attack_min_len}")
-        effective_max = min(self.attack_max_len, self.window_size)
-        if self.attack_min_len > effective_max:
+        if self.attack_max_len > self.window_size:
             raise ValueError(
-                f"attack_min_len ({self.attack_min_len}) > effective attack_max_len ({effective_max})"
+                f"attack_max_len ({self.attack_max_len}) cannot exceed "
+                f"window_size ({self.window_size})"
+            )
+        if self.attack_min_len > self.attack_max_len:
+            raise ValueError(
+                f"attack_min_len ({self.attack_min_len}) > attack_max_len ({self.attack_max_len})"
             )
 
 
@@ -70,13 +76,31 @@ class SyscallAnomalyDataset(Dataset):
         normal_windows = torch.stack([self._get_window(start, window) for start in normal_starts])
 
         attack_starts = torch.randint(0, n_tokens - window + 1, (n_attack,), generator=rng)
-        attack_windows = torch.stack([self._inject_attack(start, window, rng) for start in attack_starts])
+        attack_results = [self._inject_attack(start, window, rng) for start in attack_starts]
+        attack_windows = torch.stack([window_result for window_result, _ in attack_results])
+        attack_labels = torch.tensor(
+            [float(success) for _, success in attack_results],
+            dtype=torch.float32,
+        )
+        successful_attacks = int(attack_labels.sum().item())
+        if successful_attacks == 0:
+            raise ValueError(
+                "failed to generate any non-trivial synthetic attacks; "
+                "increase class diversity or adjust attack settings"
+            )
+        if successful_attacks < n_attack:
+            warnings.warn(
+                f"SyscallAnomalyDataset: generated {successful_attacks}/{n_attack} requested attacks; "
+                "failed attack attempts were kept as normal samples.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         all_windows = torch.cat([normal_windows, attack_windows], dim=0)
         all_labels = torch.cat(
             [
                 torch.zeros(n_normal, dtype=torch.float32),
-                torch.ones(n_attack, dtype=torch.float32),
+                attack_labels,
             ]
         )
         perm = torch.randperm(n_samples, generator=rng)
@@ -89,27 +113,40 @@ class SyscallAnomalyDataset(Dataset):
             raise ValueError("window exceeds token stream bounds")
         return self.hensel_data.token_digits[start:stop].clone()
 
-    def _inject_attack(self, start: int, window: int, rng: torch.Generator) -> torch.Tensor:
+    def _inject_attack(
+        self,
+        start: int,
+        window: int,
+        rng: torch.Generator,
+    ) -> tuple[torch.Tensor, bool]:
         base = self._get_window(start, window).clone()
-        eff_max = min(self.cfg.attack_max_len, window)
 
-        for _ in range(8):
-            attack_len = int(torch.randint(self.cfg.attack_min_len, eff_max + 1, (1,), generator=rng).item())
+        for _ in range(ATTACK_RETRY_LIMIT):
+            attack_len = int(
+                torch.randint(
+                    self.cfg.attack_min_len,
+                    self.cfg.attack_max_len + 1,
+                    (1,),
+                    generator=rng,
+                ).item()
+            )
             inject_pos = int(torch.randint(0, window - attack_len + 1, (1,), generator=rng).item())
 
             region = torch.arange(start + inject_pos, start + inject_pos + attack_len)
             window_labels = self.hensel_data.token_labels[region]
             majority_label = int(window_labels.mode().values.item())
-            candidate_idx = (self.hensel_data.token_labels != majority_label).nonzero(as_tuple=True)[0]
+            candidate_idx = (self.hensel_data.token_labels != majority_label).nonzero(
+                as_tuple=True
+            )[0]
             if candidate_idx.numel() == 0:
                 warnings.warn(
                     f"_inject_attack: no cross-class tokens found for majority_label={majority_label}. "
-                    "Returning unmodified window — this sample will be mislabeled as an attack. "
+                    "Returning unmodified window with a normal label. "
                     "Consider increasing classes or tokens_per_class.",
                     RuntimeWarning,
                     stacklevel=2,
                 )
-                return base
+                return base, False
 
             sample_ids = torch.randint(0, candidate_idx.numel(), (attack_len,), generator=rng)
             chosen = candidate_idx[sample_ids]
@@ -118,15 +155,15 @@ class SyscallAnomalyDataset(Dataset):
             if torch.equal(replacement, before):
                 continue
             base[inject_pos : inject_pos + attack_len] = replacement
-            return base
+            return base, True
 
         warnings.warn(
             "_inject_attack: failed to generate a non-trivial synthetic attack after several attempts. "
-            "Returning the original window.",
+            "Returning the original window with a normal label.",
             RuntimeWarning,
             stacklevel=2,
         )
-        return base
+        return base, False
 
     def __len__(self) -> int:
         return self.n_samples
@@ -151,7 +188,7 @@ def build_dataloaders(
         samples=benchmark_cfg.samples,
         classes=benchmark_cfg.classes,
         tokens_per_class=benchmark_cfg.tokens_per_class,
-        seed=benchmark_cfg.seed + 999_999,
+        seed=derive_seed(benchmark_cfg.seed, "val_hensel"),
         triplets=benchmark_cfg.triplets,
         distance_pairs=benchmark_cfg.distance_pairs,
     )
@@ -162,7 +199,7 @@ def build_dataloaders(
         attack_fraction=anomaly_cfg.attack_fraction,
         attack_min_len=anomaly_cfg.attack_min_len,
         attack_max_len=anomaly_cfg.attack_max_len,
-        seed=anomaly_cfg.seed ^ 0xDEAD_BEEF,
+        seed=derive_seed(anomaly_cfg.seed, "val_anomaly"),
     )
 
     train_ds = SyscallAnomalyDataset(train_hensel, anomaly_cfg, n_train)
