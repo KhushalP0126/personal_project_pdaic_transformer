@@ -281,40 +281,67 @@ The nearest pivot is IP routing. IP addresses are already hierarchical discrete 
 
 ```bash
 make setup
+make test
 make smoke
 ```
 
-Recommended GPU path:
+For the main GPU training path:
 
 ```bash
 make train
 ```
 
-Hierarchy-rule benchmark and controls:
+## Make Targets
 
-```bash
-make hierarchy
-make baselines
-make eval
-```
+### Core
 
-Untrained hierarchy sweep:
+- `make setup` creates `.venv` and installs the editable package.
+- `make test` runs the unit test suite.
+- `make cpu` runs the local CPU benchmark path, not training.
+- `make gpu` runs the CUDA benchmark path, not training.
+- `make smoke` runs the local CPU sanity-training path.
+- `make clean` removes caches, checkpoints, and generated outputs.
 
-```bash
-make sweep
-```
+### Training
 
-Realistic training:
+- `make train` runs the recommended BCE-first GPU attention training path.
+- `make vanilla` runs the standard transformer GPU training path without PDAIC attention.
+- `make hierarchy` runs the hierarchy-rule attention training path.
+- `make realistic` runs the realistic idle-heavy attention training path.
+- `make train-attention-cpu` is an alias for `make smoke`.
+- `make train-attention-bce-gpu` is an alias for `make train`.
+- `make train-attention-hierarchy-gpu` is an alias for `make hierarchy`.
+- `make train-attention-realistic-gpu` is an alias for `make realistic`.
 
-```bash
-make realistic
-```
+### Analysis
 
-Real dataset benchmark:
+- `make primes` runs vanilla `p=3,5,7` comparisons.
+- `make pdaic-primes` runs PDAIC attention `p=3,5,7` comparisons.
+- `make compare-analysis` compares the vanilla and PDAIC prime sweep logs.
+- `make analysis` runs vanilla primes, PDAIC primes, and the comparison report.
+- `make baselines` runs the majority, linear, MLP, transformer, and hierarchy-control baselines.
+- `make eval` evaluates a trained checkpoint against true, shuffled, and random hierarchy controls.
+- `make sweep` reports sparsity plus hierarchy-alignment metrics across `p` on an untrained model.
+- `make threshold` runs the GPU training path with threshold tuning output.
+- `make diagnose` runs the learning-vs-overfit diagnostic.
+- `make compare-primes`, `make sweep-p-bases`, `make run-baselines`, `make eval-trained-attention`, `make tune-threshold`, and `make over-underfit` are aliases for the corresponding targets above.
 
-```bash
-make adfa
-```
+### Open Datasets
+
+- `make adfa` downloads ADFA-LD if needed and benchmarks it, using `git` first and a GitHub ZIP fallback second.
+- `make beth` downloads and benchmarks BETH. It needs Kaggle credentials or local BETH CSV files under `data/beth`.
+- `make adfa-stats` prints local ADFA-LD stats without training or download. Run `make adfa` first, or place the extracted dataset under `data/adfa/ADFA-LD`.
+- `make open-adfa`, `make open-beth`, and `make open-adfa-stats` are aliases for the corresponding dataset targets.
+
+### 2-Adic / Hardware
+
+- `make int8` verifies unsigned INT8 arithmetic against truncated 2-adic arithmetic.
+- `make hardware` is an alias for `make int8`.
+
+### Other Aliases
+
+- `make run` is an alias for `make cpu`.
+- `make benchmark` is an alias for `make cpu`.
 
 ## Validation
 
@@ -323,26 +350,6 @@ Run the standard-library tests:
 ```bash
 make test
 ```
-
-## Make Targets
-
-- `make cpu` and `make gpu` run the benchmark path, not training.
-- `make smoke` is the local CPU sanity-training path.
-- `make train` is the recommended first GPU run for the hybrid attention model.
-- `make vanilla` runs the standard transformer GPU training path without PDAIC attention.
-- `make hierarchy` runs the hierarchy-rule benchmark training path.
-- `make realistic` runs the realistic idle-heavy training path.
-- `make primes` runs vanilla `p=3,5,7` training comparisons.
-- `make pdaic-primes` runs PDAIC attention `p=3,5,7` training comparisons.
-- `make compare-analysis` compares the vanilla and PDAIC prime sweep logs.
-- `make analysis` runs vanilla primes, PDAIC primes, and the comparison report.
-- `make baselines` runs the majority, linear, MLP, transformer, and hierarchy-control baselines.
-- `make eval` evaluates a trained checkpoint against true, shuffled, and random hierarchy controls.
-- `make sweep` reports sparsity plus hierarchy-alignment metrics across `p` on an untrained model.
-- `make adfa` downloads ADFA-LD if needed and benchmarks it. It uses `git` when available and falls back to a GitHub ZIP download.
-- `make beth` downloads and benchmarks BETH. It needs Kaggle credentials, or local BETH CSV files under `data/beth`.
-- `make adfa-stats` prints local ADFA-LD stats without training or download. Run `make adfa` first, or place the extracted dataset under `data/adfa/ADFA-LD`.
-- `make int8` verifies unsigned INT8 arithmetic against truncated 2-adic arithmetic.
 
 ## References
 
