@@ -95,6 +95,9 @@ class AnomalyLoss(nn.Module):
             )
         else:
             bce_loss = self.bce(logits, labels)
-        contrastive_loss = self.contrastive(representations, labels)
+        if self.alpha == 0.0:
+            contrastive_loss = logits.new_tensor(0.0)
+        else:
+            contrastive_loss = self.contrastive(representations, labels)
         total = bce_loss + self.alpha * contrastive_loss
         return total, bce_loss, contrastive_loss

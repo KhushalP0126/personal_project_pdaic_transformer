@@ -44,6 +44,17 @@ class TestHenselEmbedding(unittest.TestCase):
         with self.assertRaises(ValueError):
             emb(torch.zeros(2, 4, 5, dtype=torch.int64))
 
+    def test_forward_respects_embedding_dtype(self) -> None:
+        prev = torch.get_default_dtype()
+        torch.set_default_dtype(torch.float64)
+        try:
+            emb = self._make()
+            digits = torch.randint(0, 3, (2, 4, 8))
+            out = emb(digits)
+            self.assertEqual(out.dtype, emb.digit_embeds[0].weight.dtype)
+        finally:
+            torch.set_default_dtype(prev)
+
 
 class TestPadicAnomalyDetector(unittest.TestCase):
     def _small_model(self) -> PadicAnomalyDetector:
@@ -332,6 +343,15 @@ class TestTrainingSmoke(unittest.TestCase):
                 scaler=None,
             )
 
+    def test_accumulation_scale_uses_final_partial_group(self) -> None:
+        from padic_transformer.training import _accumulation_scale
+
+        self.assertEqual(_accumulation_scale(0, 5, 2), 2)
+        self.assertEqual(_accumulation_scale(1, 5, 2), 2)
+        self.assertEqual(_accumulation_scale(2, 5, 2), 2)
+        self.assertEqual(_accumulation_scale(3, 5, 2), 2)
+        self.assertEqual(_accumulation_scale(4, 5, 2), 1)
+
     def test_scheduler_epoch_lrs_stay_nonzero_for_short_run(self) -> None:
         from padic_transformer.training import _build_scheduler
 
@@ -430,6 +450,61 @@ class TestTrainingSmoke(unittest.TestCase):
         self.assertIn("padic_attention_corr", metrics)
         self.assertIn("hierarchy_gap", metrics)
         self.assertIn("padic_gate", metrics)
+
+    def test_val_epoch_skips_nan_attention_metrics(self) -> None:
+        from padic_transformer.training import _val_epoch
+
+        class NaNAttentionModel(torch.nn.Module):
+            def forward_with_attention(self, digits, return_metrics=False, return_features=False):
+                logits = torch.zeros(digits.shape[0])
+                features = torch.zeros(digits.shape[0], 2)
+                metrics = {
+                    "hierarchy_gap": torch.tensor(float("nan")),
+                    "padic_gate": torch.tensor(float("nan")),
+                }
+                return logits, features, [], metrics
+
+        model = NaNAttentionModel()
+        loss_fn = AnomalyLoss(p=3, alpha=0.0)
+        digits = torch.randint(0, 3, (4, 8, 8))
+        labels = torch.tensor([0, 1, 0, 1], dtype=torch.float32)
+        loader = torch.utils.data.DataLoader(
+            torch.utils.data.TensorDataset(digits, labels),
+            batch_size=2,
+            shuffle=False,
+        )
+        metrics = _val_epoch(model, loader, loss_fn, torch.device("cpu"))
+        self.assertTrue(torch.isfinite(torch.tensor(metrics["hierarchy_gap"])).item())
+        self.assertTrue(torch.isfinite(torch.tensor(metrics["padic_gate"])).item())
+
+    def test_synthetic_pos_weight_override_is_respected(self) -> None:
+        from padic_transformer.training import TrainConfig, train
+
+        cfg = TrainConfig(
+            p=3,
+            r=8,
+            d_model=32,
+            n_heads=4,
+            n_layers=1,
+            ffn_dim=64,
+            head_hidden=16,
+            window_size=8,
+            n_train=32,
+            n_val=8,
+            samples=64,
+            classes=4,
+            tokens_per_class=16,
+            epochs=1,
+            batch_size=8,
+            num_workers=0,
+            checkpoint_dir="results/test_checkpoints",
+            log_json="",
+            log_md="results/test_result.md",
+            save_every=999,
+            pos_weight=3.5,
+        )
+        result = train(cfg, torch.device("cpu"))
+        self.assertIn("best_auroc", result)
 
     def test_cuda_optimizer_fallback_path_is_supported(self) -> None:
         import torch.optim

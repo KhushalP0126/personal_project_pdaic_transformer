@@ -114,14 +114,8 @@ class HierarchyRuleDataset(Dataset):
         return self.hensel_data.token_digits[token_ids].clone()
 
     def _sample_normal_window(self, rng: torch.Generator) -> torch.Tensor:
-        pieces: list[torch.Tensor] = []
-        remaining = self.cfg.window_size
-        while remaining > 0:
-            group_idx = int(torch.randint(0, len(self._prefix_groups), (1,), generator=rng).item())
-            segment_len = min(self.cfg.stay_steps, remaining)
-            pieces.append(self._sample_group_tokens(group_idx, segment_len, rng))
-            remaining -= segment_len
-        return torch.cat(pieces, dim=0)
+        group_idx = int(torch.randint(0, len(self._prefix_groups), (1,), generator=rng).item())
+        return self._sample_group_tokens(group_idx, self.cfg.window_size, rng)
 
     def _sample_attack_window(self, rng: torch.Generator) -> tuple[torch.Tensor, bool]:
         base = self._sample_normal_window(rng)

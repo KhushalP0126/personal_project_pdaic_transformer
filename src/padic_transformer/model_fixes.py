@@ -60,7 +60,7 @@ class HenselEmbeddingWithPosition(nn.Module):
             digits.shape[0],
             digits.shape[1],
             self.d_model,
-            dtype=torch.get_default_dtype(),
+            dtype=self.digit_embeds[0].weight.dtype,
             device=digits.device,
         )
         for idx, embed in enumerate(self.digit_embeds):

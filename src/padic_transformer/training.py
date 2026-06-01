@@ -116,6 +116,17 @@ def _dataset_pos_weight(ds) -> float:
     return n_neg / max(1, n_pos)
 
 
+def _accumulation_scale(step: int, total_steps: int, grad_accum: int) -> int:
+    if grad_accum < 1:
+        raise ValueError("grad_accum must be >= 1")
+    if total_steps < 1:
+        return grad_accum
+    final_group = total_steps % grad_accum or grad_accum
+    if step >= total_steps - final_group:
+        return final_group
+    return grad_accum
+
+
 @dataclass
 class TrainConfig:
     p: int = 3
@@ -158,7 +169,7 @@ class TrainConfig:
     num_workers: int = 4
 
     alpha: float = 0.5
-    pos_weight: float = 1.0
+    pos_weight: float | None = None
     margin_pos: float = 0.1
     margin_neg: float = 0.5
     max_pairs: int = 4096
@@ -199,16 +210,18 @@ def _train_epoch(
     total_loss = total_bce = total_ctr = 0.0
     n_batches = 0
     optimizer.zero_grad()
+    total_steps = len(loader)
 
     for step, (digits, labels) in enumerate(loader):
         digits = digits.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
+        accum_scale = _accumulation_scale(step, total_steps, grad_accum)
 
         with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=(amp_dtype != torch.float32)):
             logits, representations = model.forward_with_features(digits)
             loss, bce_loss, ctr_loss = loss_fn(logits, labels, representations)
             loss = loss + compute_diversity_regularization(model)
-            loss = loss / grad_accum
+            loss = loss / accum_scale
 
         if scaler is not None:
             scaler.scale(loss).backward()
@@ -227,7 +240,7 @@ def _train_epoch(
                 optimizer.step()
             optimizer.zero_grad()
 
-        total_loss += float(loss.item()) * grad_accum
+        total_loss += float(loss.item()) * accum_scale
         total_bce += float(bce_loss.item())
         total_ctr += float(ctr_loss.item())
         n_batches += 1
@@ -253,7 +266,8 @@ def _val_epoch(
     all_logits: list[torch.Tensor] = []
     all_labels: list[torch.Tensor] = []
     attn_metric_sums: dict[str, float] = {}
-    attn_metric_count = 0
+    attn_metric_counts: dict[str, int] = {}
+    attn_metric_keys: set[str] = set()
 
     for digits, labels in loader:
         digits = digits.to(device, non_blocking=True)
@@ -283,8 +297,12 @@ def _val_epoch(
         all_labels.append(labels.cpu())
         if attn_metrics:
             for key, value in attn_metrics.items():
-                attn_metric_sums[key] = attn_metric_sums.get(key, 0.0) + float(value.detach().cpu().item())
-            attn_metric_count += 1
+                attn_metric_keys.add(key)
+                if torch.isfinite(value):
+                    attn_metric_sums[key] = attn_metric_sums.get(key, 0.0) + float(
+                        value.detach().cpu().item()
+                    )
+                    attn_metric_counts[key] = attn_metric_counts.get(key, 0) + 1
 
     logits_cat = torch.cat(all_logits)
     labels_cat = torch.cat(all_labels)
@@ -308,9 +326,9 @@ def _val_epoch(
     metrics["best_fpr"] = threshold_metrics["fpr"]
     metrics["best_threshold"] = threshold_metrics["threshold"]
     metrics.update(score_stats)
-    if attn_metric_count > 0:
-        for key, value in attn_metric_sums.items():
-            metrics[key] = value / attn_metric_count
+    for key in attn_metric_keys:
+        count = attn_metric_counts.get(key, 0)
+        metrics[key] = attn_metric_sums.get(key, 0.0) / count if count else 0.0
     metrics["loss"] = total_loss / max(1, n_batches)
     metrics["bce"] = total_bce / max(1, n_batches)
     metrics["contrastive"] = total_ctr / max(1, n_batches)
@@ -490,7 +508,16 @@ def train(
             distance_pairs=benchmark_cfg.distance_pairs,
         )
         val_hensel = generate_clustered_hensel_dataset(val_cfg, device="cpu")
-        realistic_cfg = RealisticDatasetConfig(
+        train_realistic_cfg = RealisticDatasetConfig(
+            window_size=config.window_size,
+            attack_fraction=config.realistic_attack_fraction,
+            idle_fraction=config.idle_fraction,
+            attack_min_len=config.attack_min_len,
+            attack_max_len=config.attack_max_len,
+            attack_kinds=config.attack_kinds,
+            seed=config.seed,
+        )
+        val_realistic_cfg = RealisticDatasetConfig(
             window_size=config.window_size,
             attack_fraction=config.realistic_attack_fraction,
             idle_fraction=config.idle_fraction,
@@ -499,8 +526,8 @@ def train(
             attack_kinds=config.attack_kinds,
             seed=derive_seed(config.seed, "val_realistic_dataset"),
         )
-        train_ds = RealisticBusDataset(train_hensel, realistic_cfg, n_samples=config.n_train)
-        val_ds = RealisticBusDataset(val_hensel, realistic_cfg, n_samples=config.n_val)
+        train_ds = RealisticBusDataset(train_hensel, train_realistic_cfg, n_samples=config.n_train)
+        val_ds = RealisticBusDataset(val_hensel, val_realistic_cfg, n_samples=config.n_val)
         pin = device.type == "cuda"
         train_loader = DataLoader(
             train_ds,
@@ -565,8 +592,12 @@ def train(
             max_pairs=config.max_pairs,
         ).to(device)
     else:
-        pos_weight = _dataset_pos_weight(train_loader.dataset)
-        print(f"synthetic pos_weight={pos_weight:.2f} (n_neg/n_pos)")
+        if config.pos_weight is None:
+            pos_weight = _dataset_pos_weight(train_loader.dataset)
+            print(f"synthetic pos_weight={pos_weight:.2f} (n_neg/n_pos)")
+        else:
+            pos_weight = config.pos_weight
+            print(f"synthetic pos_weight override={pos_weight:.2f}")
         loss_fn = AnomalyLoss(
             p=config.p,
             alpha=config.alpha,

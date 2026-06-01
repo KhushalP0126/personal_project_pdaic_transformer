@@ -14,7 +14,7 @@ from .model import AnomalyHead, HenselEmbedding
 def _attention_sparsity(weights: torch.Tensor, threshold: float = 1e-4) -> torch.Tensor:
     """Return the fraction of attention weights below `threshold`."""
     if weights.numel() == 0:
-        return weights.new_tensor(float("nan"))
+        return weights.new_tensor(0.0)
     return (weights < threshold).to(torch.float32).mean()
 
 
@@ -30,7 +30,7 @@ def _safe_masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         raise ValueError("values and mask must have matching shapes")
     masked = values.masked_select(mask)
     if masked.numel() == 0:
-        return values.new_tensor(float("nan"))
+        return values.new_tensor(0.0)
     return masked.mean()
 
 
@@ -59,13 +59,13 @@ def _attention_hierarchy_metrics(
     flat_weights = weights.masked_select(pair_mask)
     flat_prefix = hard_prefix.masked_select(pair_mask)
     if flat_weights.numel() < 2:
-        corr = weights.new_tensor(float("nan"))
+        corr = weights.new_tensor(0.0)
     else:
         centered_weights = flat_weights - flat_weights.mean()
         centered_prefix = flat_prefix - flat_prefix.mean()
         denom = centered_weights.norm() * centered_prefix.norm()
         if float(denom.item()) == 0.0:
-            corr = weights.new_tensor(float("nan"))
+            corr = weights.new_tensor(0.0)
         else:
             corr = (centered_weights @ centered_prefix) / denom
 
@@ -245,11 +245,11 @@ class PadicAttentionHead(nn.Module):
         q = self.query_proj(x)
         k = self.key_proj(x)
         content_logits = torch.bmm(q, k.transpose(1, 2)) / math.sqrt(q.shape[-1])
-        content_std = content_logits.std(dim=-1, keepdim=True).clamp_min(1e-3)
+        content_std = content_logits.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-3)
         content_logits = content_logits / content_std
         padic_logits = scale * raw
         padic_logits = padic_logits - padic_logits.mean(dim=-1, keepdim=True)
-        padic_std = padic_logits.std(dim=-1, keepdim=True).clamp_min(1e-3)
+        padic_std = padic_logits.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-3)
         padic_logits = padic_logits / padic_std
         logits = content_logits + self.padic_gate.sigmoid() * padic_logits
 
@@ -257,6 +257,8 @@ class PadicAttentionHead(nn.Module):
             logits = logits.masked_fill(key_padding_mask.unsqueeze(1), torch.finfo(logits.dtype).min)
 
         weights = torch.softmax(logits, dim=-1)
+        if key_padding_mask is not None:
+            weights = weights * (~key_padding_mask).unsqueeze(-1).to(weights.dtype)
         values = self.value_proj(x)
         out = torch.bmm(weights, values)
         out = self.dropout(out)

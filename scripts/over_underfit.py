@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-epochs", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--alpha", type=float, default=0.5)
-    parser.add_argument("--pos-weight", type=float, default=1.0)
+    parser.add_argument("--pos-weight", type=float, default=None)
     parser.add_argument("--margin-pos", type=float, default=0.1)
     parser.add_argument("--margin-neg", type=float, default=0.5)
     parser.add_argument("--max-pairs", type=int, default=4096)
@@ -74,6 +74,8 @@ def classify(history: list[dict], train_loss_gap: float = 0.10, val_loss_gap: fl
 def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
     config = TrainConfig(
         p=args.p,
         r=args.r,

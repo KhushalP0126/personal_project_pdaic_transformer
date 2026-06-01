@@ -40,6 +40,18 @@ class TestSoftPadicValuation(unittest.TestCase):
         loss = valuation.temperature_diversity_loss()
         self.assertTrue(torch.isfinite(loss).item())
 
+    def test_seq_len_one_logits_are_finite(self) -> None:
+        head = PadicAttentionHead(p=3, r=8, d_model=32, d_head=16, d_digit=8)
+        digits = torch.randint(0, 3, (2, 1, 8))
+        x = torch.randn(2, 1, 32)
+        out, weights, metrics = head(digits, x, return_metrics=True)
+        self.assertEqual(out.shape, (2, 1, 16))
+        self.assertEqual(weights.shape, (2, 1, 1))
+        self.assertTrue(torch.isfinite(out).all().item())
+        self.assertTrue(torch.isfinite(weights).all().item())
+        for value in metrics.values():
+            self.assertTrue(torch.isfinite(value).item())
+
 
 class TestPadicAttentionHead(unittest.TestCase):
     def test_output_shape(self) -> None:
@@ -97,6 +109,18 @@ class TestPadicMultiHeadAttention(unittest.TestCase):
         mask[:, -2:] = True
         out, _ = mha(digits, x, key_padding_mask=mask)
         torch.testing.assert_close(out[:, -2:], torch.zeros_like(out[:, -2:]), atol=1e-6, rtol=0.0)
+
+
+class TestAnomalyHead(unittest.TestCase):
+    def test_all_padded_samples_return_finite_zero_pooled_features(self) -> None:
+        from padic_transformer.model import AnomalyHead
+
+        head = AnomalyHead(d_model=16, hidden_dim=8)
+        hidden = torch.randn(2, 4, 16)
+        mask = torch.ones(2, 4, dtype=torch.bool)
+        pooled = head.pool_hidden(hidden, padding_mask=mask)
+        self.assertTrue(torch.isfinite(pooled).all().item())
+        torch.testing.assert_close(pooled, torch.zeros_like(pooled))
 
 
 class TestPadicTransformerLayer(unittest.TestCase):
