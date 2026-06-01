@@ -133,20 +133,21 @@ class SoftPadicValuation(nn.Module):
 
     def temperature_stats(self) -> dict[str, float]:
         temps = self.log_temperature.exp().detach()
+        temp_std = temps.std(unbiased=False)
         return {
             "temp_mean": float(temps.mean().item()),
-            "temp_std": float(temps.std().item()),
+            "temp_std": float(temp_std.item()),
             "temp_min": float(temps.min().item()),
             "temp_max": float(temps.max().item()),
             "temp_pos0": float(temps[0].item()),
             "temp_pos_last": float(temps[-1].item()),
-            "collapsed": bool((temps.std() < 0.1 * temps.mean()).item()),
+            "collapsed": bool((temp_std < 0.1 * temps.mean()).item()),
         }
 
     def temperature_diversity_loss(self) -> torch.Tensor:
         temps = self.log_temperature.exp()
         mean = temps.mean()
-        std = temps.std()
+        std = temps.std(unbiased=False)
         cv = std / (mean + self.eps)
         target_cv = 0.3
         return self.diversity_weight * F.relu(target_cv - cv)
@@ -218,7 +219,7 @@ class PadicAttentionHead(nn.Module):
         self.logit_scale = nn.Parameter(torch.tensor(8.0))
         self.query_proj = nn.Linear(d_model, d_head)
         self.key_proj = nn.Linear(d_model, d_head)
-        self.padic_gate = nn.Parameter(torch.tensor(-2.0))
+        self.padic_gate = nn.Parameter(torch.tensor(0.0))
         self.gate_regularization_weight = 0.001
         self.value_proj = nn.Linear(d_model, d_head)
         self.dropout = nn.Dropout(dropout)
@@ -324,6 +325,8 @@ class PadicMultiHeadAttention(nn.Module):
             outputs.append(out)
             weights.append(attn)
         out = self.out_proj(torch.cat(outputs, dim=-1))
+        if key_padding_mask is not None:
+            out = out * (~key_padding_mask).unsqueeze(-1).to(out.dtype)
         if not return_metrics:
             return out, weights
         metrics = {
@@ -376,9 +379,16 @@ class PadicTransformerLayer(nn.Module):
                 self.norm1(x),
                 key_padding_mask=src_key_padding_mask,
             )
+        valid = None
+        if src_key_padding_mask is not None:
+            valid = (~src_key_padding_mask).unsqueeze(-1).to(x.dtype)
         x = x + self.dropout(attn_out)
+        if valid is not None:
+            x = x * valid
         x = self.norm2(x)
         x = x + self.dropout(self.ffn(x))
+        if valid is not None:
+            x = x * valid
         if not return_metrics:
             return x, weights
         return x, weights, metrics

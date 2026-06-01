@@ -29,6 +29,17 @@ class TestSoftPadicValuation(unittest.TestCase):
         out = valuation(a, b)
         self.assertEqual(out.shape, (4,))
 
+    def test_r1_temperature_stats_and_loss_are_finite(self) -> None:
+        valuation = SoftPadicValuation(p=3, r=1, d_digit=8)
+        stats = valuation.temperature_stats()
+        self.assertEqual(stats["temp_std"], 0.0)
+        for value in stats.values():
+            if isinstance(value, bool):
+                continue
+            self.assertTrue(torch.isfinite(torch.tensor(value)).item())
+        loss = valuation.temperature_diversity_loss()
+        self.assertTrue(torch.isfinite(loss).item())
+
 
 class TestPadicAttentionHead(unittest.TestCase):
     def test_output_shape(self) -> None:
@@ -66,7 +77,7 @@ class TestPadicAttentionHead(unittest.TestCase):
         ):
             self.assertIn(key, metrics)
         gate = float(metrics["padic_gate"].item())
-        self.assertAlmostEqual(gate, torch.sigmoid(torch.tensor(-2.0)).item(), places=6)
+        self.assertAlmostEqual(gate, 0.5, places=6)
 
 
 class TestPadicMultiHeadAttention(unittest.TestCase):
@@ -77,6 +88,26 @@ class TestPadicMultiHeadAttention(unittest.TestCase):
         out, weights = mha(digits, x)
         self.assertEqual(out.shape, (2, 5, 32))
         self.assertEqual(len(weights), 4)
+
+    def test_padded_queries_zero_after_out_projection(self) -> None:
+        mha = PadicMultiHeadAttention(p=3, r=8, d_model=32, n_heads=4, d_digit=8)
+        digits = torch.randint(0, 3, (2, 5, 8))
+        x = torch.randn(2, 5, 32)
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[:, -2:] = True
+        out, _ = mha(digits, x, key_padding_mask=mask)
+        torch.testing.assert_close(out[:, -2:], torch.zeros_like(out[:, -2:]), atol=1e-6, rtol=0.0)
+
+
+class TestPadicTransformerLayer(unittest.TestCase):
+    def test_padded_tokens_stay_zero_after_attention_and_ffn(self) -> None:
+        layer = PadicTransformerLayer(p=3, r=8, d_model=32, n_heads=4, ffn_dim=64, d_digit=8)
+        digits = torch.randint(0, 3, (2, 5, 8))
+        x = torch.randn(2, 5, 32)
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[:, -2:] = True
+        out, _ = layer(digits, x, src_key_padding_mask=mask)
+        torch.testing.assert_close(out[:, -2:], torch.zeros_like(out[:, -2:]), atol=1e-6, rtol=0.0)
 
 
 class TestPadicAttentionAnomalyDetector(unittest.TestCase):

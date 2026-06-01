@@ -70,7 +70,7 @@ def generate_clustered_hensel_dataset(
         class_token_bank[class_id, :, :cluster_depth] = centers[class_id, :cluster_depth]
 
     labels = torch.empty(config.samples, dtype=torch.int64, device=resolved_device)
-    max_dwell = max(2, min(cluster_depth + 1, 8))
+    max_dwell = max(4, min((cluster_depth + 1) * 2, 16))
     current_label = int(
         torch.randint(
             0,
