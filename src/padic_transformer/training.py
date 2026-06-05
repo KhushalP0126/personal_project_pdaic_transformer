@@ -137,6 +137,7 @@ class TrainConfig:
     ffn_dim: int = 1024
     head_hidden: int = 128
     d_digit: int = 16
+    hard_match: bool = False
     dropout: float = 0.1
 
     window_size: int = 32
@@ -146,7 +147,7 @@ class TrainConfig:
     hierarchy_rule_dataset: bool = False
     rule_subtree_depth: int = 2
     rule_stay_steps: int = 4
-    rule_attack_tokens: int = 1
+    rule_attack_tokens: int = 3
     realistic_dataset: bool = False
     realistic_attack_fraction: float = 0.005
     idle_fraction: float = 0.70

@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hierarchy-rule-dataset", action="store_true", help="Use the subtree-stay rule dataset path")
     parser.add_argument("--rule-subtree-depth", type=int, default=2)
     parser.add_argument("--rule-stay-steps", type=int, default=4)
-    parser.add_argument("--rule-attack-tokens", type=int, default=1)
+    parser.add_argument("--rule-attack-tokens", type=int, default=3)
     parser.add_argument("--realistic-dataset", action="store_true", help="Use the realistic bus-trace dataset path")
     parser.add_argument("--realistic-attack-fraction", type=float, default=0.005)
     parser.add_argument("--idle-fraction", type=float, default=0.70)
@@ -66,6 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-pairs", type=int, default=4096)
     parser.add_argument("--max-seq-len", type=int, default=256)
     parser.add_argument("--attention", action="store_true", help="Use the soft p-adic attention model")
+    parser.add_argument("--hard-match", action="store_true", help="Use exact digit equality instead of learned embeddings for p-adic valuation")
     parser.add_argument("--d-digit", type=int, default=16, help="Per-digit embedding width for soft attention")
     parser.add_argument("--checkpoint-dir", default="results/checkpoints")
     parser.add_argument("--log-json", default="results/training_log.json")
@@ -88,6 +89,7 @@ def main() -> None:
         ffn_dim=args.ffn_dim,
         head_hidden=args.head_hidden,
         d_digit=args.d_digit,
+        hard_match=args.hard_match,
         dropout=args.dropout,
         window_size=args.window_size,
         attack_fraction=args.attack_fraction,
@@ -141,6 +143,7 @@ def main() -> None:
                 d_digit=cfg.d_digit,
                 dropout=cfg.dropout,
                 max_seq_len=cfg.max_seq_len,
+                hard_match=cfg.hard_match,
             )
 
         train(config, device, model_factory=factory)

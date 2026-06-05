@@ -103,6 +103,7 @@ class SoftPadicValuation(nn.Module):
         eps: float = 1e-6,
         diversity_weight: float = 0.01,
         temperature_decay: float = 0.05,
+        hard_match: bool = False,
     ) -> None:
         super().__init__()
         if p < 2:
@@ -120,8 +121,12 @@ class SoftPadicValuation(nn.Module):
         self.eps = eps
         self.diversity_weight = diversity_weight
         self.temperature_decay = temperature_decay
+        self.hard_match = hard_match
 
-        self.digit_embeddings = nn.ModuleList([nn.Embedding(p, d_digit) for _ in range(r)])
+        if not hard_match:
+            self.digit_embeddings = nn.ModuleList([nn.Embedding(p, d_digit) for _ in range(r)])
+        else:
+            self.digit_embeddings = nn.ModuleList()  # unused in hard mode
         if learn_temp:
             self.log_temperature = nn.Parameter(torch.full((r,), math.log(temperature)))
             with torch.no_grad():
@@ -130,7 +135,8 @@ class SoftPadicValuation(nn.Module):
         else:
             self.register_buffer("log_temperature", torch.full((r,), math.log(temperature)))
         self.prefix_weights = nn.Parameter(torch.ones(r))
-        self._reset_parameters()
+        if not hard_match:
+            self._reset_parameters()
 
     def _reset_parameters(self) -> None:
         for emb in self.digit_embeddings:
@@ -158,6 +164,13 @@ class SoftPadicValuation(nn.Module):
         return self.diversity_weight * F.relu(target_cv - cv)
 
     def _soft_match_at_position(self, digits_a: torch.Tensor, digits_b: torch.Tensor, position: int) -> torch.Tensor:
+        if self.hard_match:
+            # Exact digit equality: 1.0 if equal, 0.0 if not.
+            # Use a steep sigmoid to keep gradients flowing through temperature.
+            match = (digits_a == digits_b).to(torch.float32)
+            tau = self.log_temperature[position].exp().clamp(min=0.01, max=20.0)
+            # Map match ∈ {0, 1} to sigmoid input: match=1 → +tau, match=0 → −tau
+            return torch.sigmoid(tau * (match - 0.5))
         emb = self.digit_embeddings[position]
         ea = emb(digits_a)
         eb = emb(digits_b)
@@ -198,10 +211,15 @@ class SoftPadicValuation(nn.Module):
         running_log = digits.new_zeros((batch, seq, seq), dtype=torch.float32)
         soft_val = digits.new_zeros((batch, seq, seq), dtype=torch.float32)
         for pos in range(self.r):
-            emb = self.digit_embeddings[pos](digits[..., pos]).to(torch.float32)
             tau = self.log_temperature[pos].exp().clamp(min=0.01, max=20.0).to(torch.float32)
-            cos_sim = F.cosine_similarity(emb.unsqueeze(2), emb.unsqueeze(1), dim=-1)
-            similarity = 0.5 * (1.0 + cos_sim)
+            if self.hard_match:
+                d = digits[..., pos]
+                match = (d.unsqueeze(2) == d.unsqueeze(1)).to(torch.float32)
+                similarity = match
+            else:
+                emb = self.digit_embeddings[pos](digits[..., pos]).to(torch.float32)
+                cos_sim = F.cosine_similarity(emb.unsqueeze(2), emb.unsqueeze(1), dim=-1)
+                similarity = 0.5 * (1.0 + cos_sim)
             running_log = running_log + F.logsigmoid(tau * (similarity - 0.5))
             soft_val = soft_val + torch.exp(running_log) * weights[pos]
         return soft_val / (weights.sum() + self.eps)
@@ -218,9 +236,10 @@ class PadicAttentionHead(nn.Module):
         d_head: int,
         d_digit: int = 16,
         dropout: float = 0.1,
+        hard_match: bool = False,
     ) -> None:
         super().__init__()
-        self.valuation = SoftPadicValuation(p=p, r=r, d_digit=d_digit)
+        self.valuation = SoftPadicValuation(p=p, r=r, d_digit=d_digit, hard_match=hard_match)
         self.logit_scale = nn.Parameter(torch.tensor(8.0))
         self.query_proj = nn.Linear(d_model, d_head)
         self.key_proj = nn.Linear(d_model, d_head)
@@ -295,13 +314,14 @@ class PadicMultiHeadAttention(nn.Module):
         n_heads: int,
         d_digit: int = 16,
         dropout: float = 0.1,
+        hard_match: bool = False,
     ) -> None:
         super().__init__()
         if d_model % n_heads != 0:
             raise ValueError("d_model must be divisible by n_heads")
         self.heads = nn.ModuleList(
             [
-                PadicAttentionHead(p=p, r=r, d_model=d_model, d_head=d_model // n_heads, d_digit=d_digit, dropout=dropout)
+                PadicAttentionHead(p=p, r=r, d_model=d_model, d_head=d_model // n_heads, d_digit=d_digit, dropout=dropout, hard_match=hard_match)
                 for _ in range(n_heads)
             ]
         )
@@ -363,9 +383,10 @@ class PadicTransformerLayer(nn.Module):
         ffn_dim: int,
         d_digit: int = 16,
         dropout: float = 0.1,
+        hard_match: bool = False,
     ) -> None:
         super().__init__()
-        self.self_attn = PadicMultiHeadAttention(p=p, r=r, d_model=d_model, n_heads=n_heads, d_digit=d_digit, dropout=dropout)
+        self.self_attn = PadicMultiHeadAttention(p=p, r=r, d_model=d_model, n_heads=n_heads, d_digit=d_digit, dropout=dropout, hard_match=hard_match)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = nn.Sequential(
@@ -422,6 +443,7 @@ class PadicAttentionEncoder(nn.Module):
         ffn_dim: int,
         d_digit: int = 16,
         dropout: float = 0.1,
+        hard_match: bool = False,
     ) -> None:
         super().__init__()
         self.layers = nn.ModuleList(
@@ -434,6 +456,7 @@ class PadicAttentionEncoder(nn.Module):
                     ffn_dim=ffn_dim,
                     d_digit=d_digit,
                     dropout=dropout,
+                    hard_match=hard_match,
                 )
                 for _ in range(n_layers)
             ]
@@ -493,6 +516,7 @@ class PadicAttentionAnomalyDetector(nn.Module):
         d_digit: int = 16,
         dropout: float = 0.1,
         max_seq_len: int = 256,
+        hard_match: bool = False,
         ) -> None:
         super().__init__()
         self.p = p
@@ -508,6 +532,7 @@ class PadicAttentionAnomalyDetector(nn.Module):
             ffn_dim=ffn_dim,
             d_digit=d_digit,
             dropout=dropout,
+            hard_match=hard_match,
         )
         self.head = AnomalyHead(d_model=d_model, hidden_dim=head_hidden, dropout=dropout)
 
