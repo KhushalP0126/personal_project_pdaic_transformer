@@ -19,7 +19,7 @@ from padic_transformer.training import TrainConfig, train
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
     parser.add_argument("--p", type=int, default=3)
     parser.add_argument("--r", type=int, default=8)
     parser.add_argument("--d-model", type=int, default=128)
@@ -58,6 +58,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_device(requested: str) -> torch.device:
+    mps_available = bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+    if requested == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if mps_available:
+            return torch.device("mps")
+        return torch.device("cpu")
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+    if requested == "mps" and not mps_available:
+        raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
+    return torch.device(requested)
+
+
 def classify(history: list[dict], train_loss_gap: float = 0.10, val_loss_gap: float = 0.10) -> str:
     first = history[0]
     last = history[-1]
@@ -73,9 +88,7 @@ def classify(history: list[dict], train_loss_gap: float = 0.10, val_loss_gap: fl
 
 def main() -> None:
     args = parse_args()
-    device = torch.device(args.device)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+    device = resolve_device(args.device)
     config = TrainConfig(
         p=args.p,
         r=args.r,

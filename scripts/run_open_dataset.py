@@ -383,7 +383,7 @@ def train_and_eval(
     from padic_transformer.losses import AnomalyLoss
 
     torch.manual_seed(seed)
-    device = torch.device(device_str)
+    device = resolve_device(device_str)
     n = len(labels)
     n_train = int(0.8 * n)
     n_val = n - n_train
@@ -519,13 +519,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-layers", type=int, default=2)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     parser.add_argument("--stats-only", action="store_true")
     parser.add_argument("--no-download", action="store_true")
     parser.add_argument("--triplets", type=int, default=5000)
     parser.add_argument("--seeds", type=int, default=3, help="Number of stability runs to average")
     parser.add_argument("--quantize-int8", action="store_true", help="Benchmark a dynamically quantized CPU model")
     return parser.parse_args()
+
+
+def resolve_device(requested: str) -> torch.device:
+    mps_available = bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+    if requested == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if mps_available:
+            return torch.device("mps")
+        return torch.device("cpu")
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+    if requested == "mps" and not mps_available:
+        raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
+    return torch.device(requested)
 
 
 def _write_markdown(path: Path, dataset: str, stats: dict[str, object], um: dict[str, object], results: dict[str, object] | None) -> None:

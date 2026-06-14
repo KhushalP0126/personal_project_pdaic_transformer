@@ -65,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--triplets", type=int, default=20000)
     parser.add_argument("--distance-pairs", type=int, default=200000)
     parser.add_argument("--seed", type=int, default=20260504)
-    parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
+    parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
     parser.add_argument("--output-md", default="results/reference_benchmark.md")
     return parser.parse_args()
 
@@ -81,9 +81,18 @@ def safe_results_path(raw_path: str) -> Path:
 
 def resolve_device(requested: str) -> torch.device:
     if requested == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        mps_available = bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+        if mps_available:
+            return torch.device("mps")
+        return torch.device("cpu")
     if requested == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but torch.cuda.is_available() is false")
+    if requested == "mps":
+        mps_available = bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+        if not mps_available:
+            raise RuntimeError("MPS was requested but torch.backends.mps.is_available() is false")
     return torch.device(requested)
 
 
@@ -122,6 +131,8 @@ class SweepResult:
     same_cluster_attention: float
     diff_cluster_attention: float
     hierarchy_gap: float
+    twin_prime_stress_padic_attention_corr: float
+    twin_prime_stress_hierarchy_gap: float
     padic_gate: float
     normal_d_p: float
     anomaly_d_p: float
@@ -133,11 +144,13 @@ def _write_sweep_markdown(path: Path, report: dict[str, object]) -> None:
     rows = []
     for item in report["runs"]:
         rows.append(
-            "| {p} | {sparsity:.4f}% | {corr:.4f} | {gap:.6f} | {gate:.4f} | {normal_dp:.6f} | {anomaly_dp:.6f} | {latency:.3f} |".format(
+            "| {p} | {sparsity:.4f}% | {corr:.4f} | {gap:.6f} | {tp_corr:.4f} | {tp_gap:.6f} | {gate:.4f} | {normal_dp:.6f} | {anomaly_dp:.6f} | {latency:.3f} |".format(
                 p=item["p"],
                 sparsity=item["attention_sparsity_pct"],
                 corr=item["padic_attention_corr"],
                 gap=item["hierarchy_gap"],
+                tp_corr=item["twin_prime_stress_padic_attention_corr"],
+                tp_gap=item["twin_prime_stress_hierarchy_gap"],
                 gate=item["padic_gate"],
                 normal_dp=item["normal_d_p"],
                 anomaly_dp=item["anomaly_d_p"],
@@ -155,12 +168,13 @@ def _write_sweep_markdown(path: Path, report: dict[str, object]) -> None:
             f"- Batches per p: `{report['batches_per_p']}`",
             f"- Batch size: `{report['batch_size']}`",
             "",
-            "| p | Attention Sparsity | hierarchy corr | hierarchy gap | p-adic gate | normal d_p | anomaly d_p | forward latency |",
-            "|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "| p | Attention Sparsity | hierarchy corr | hierarchy gap | twin-prime corr | twin-prime gap | p-adic gate | normal d_p | anomaly d_p | forward latency |",
+            "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
             *rows,
             "",
             "Attention sparsity is the percentage of attention weights below `1e-4`.",
             "Hierarchy correlation is the correlation between attention weights and hard shared-prefix length on non-diagonal valid token pairs.",
+            "Twin-prime stress uses pairs whose packed integer ids differ by exactly 2; for odd primes these pairs are ordinary-close but p-adically distant.",
             "The p-adic distance uses `d_p(x, y) = p^{-v_p(x-y)}` averaged over non-diagonal token pairs.",
             "",
         ]
@@ -237,6 +251,8 @@ def sweep_p_bases(
         same_cluster_attn = []
         diff_cluster_attn = []
         hierarchy_gaps = []
+        twin_prime_corrs = []
+        twin_prime_gaps = []
         padic_gates = []
         latencies = []
 
@@ -258,6 +274,8 @@ def sweep_p_bases(
                 same_cluster_attn.append(float(metrics["same_cluster_attention"].item()))
                 diff_cluster_attn.append(float(metrics["diff_cluster_attention"].item()))
                 hierarchy_gaps.append(float(metrics["hierarchy_gap"].item()))
+                twin_prime_corrs.append(float(metrics["twin_prime_stress_padic_attention_corr"].item()))
+                twin_prime_gaps.append(float(metrics["twin_prime_stress_hierarchy_gap"].item()))
                 padic_gates.append(float(metrics["padic_gate"].item()))
 
                 normal_mask = labels == 0
@@ -274,6 +292,8 @@ def sweep_p_bases(
             same_cluster_attention=sum(same_cluster_attn) / max(1, len(same_cluster_attn)),
             diff_cluster_attention=sum(diff_cluster_attn) / max(1, len(diff_cluster_attn)),
             hierarchy_gap=sum(hierarchy_gaps) / max(1, len(hierarchy_gaps)),
+            twin_prime_stress_padic_attention_corr=sum(twin_prime_corrs) / max(1, len(twin_prime_corrs)),
+            twin_prime_stress_hierarchy_gap=sum(twin_prime_gaps) / max(1, len(twin_prime_gaps)),
             padic_gate=sum(padic_gates) / max(1, len(padic_gates)),
             normal_d_p=sum(normal_distances) / max(1, len(normal_distances)),
             anomaly_d_p=sum(anomaly_distances) / max(1, len(anomaly_distances)),
@@ -429,12 +449,14 @@ def write_trained_eval_markdown(path: Path, report: dict[str, object]) -> None:
     rows = []
     for name, item in report["variants"].items():
         rows.append(
-            "| {name} | {auroc:.4f} | {f1:.4f} | {corr:.4f} | {gap:.4f} | {gate:.4f} |".format(
+            "| {name} | {auroc:.4f} | {f1:.4f} | {corr:.4f} | {gap:.4f} | {tp_corr:.4f} | {tp_gap:.4f} | {gate:.4f} |".format(
                 name=name,
                 auroc=item["auroc"],
                 f1=item["f1"],
                 corr=item.get("padic_attention_corr", float("nan")),
                 gap=item.get("hierarchy_gap", float("nan")),
+                tp_corr=item.get("twin_prime_stress_padic_attention_corr", float("nan")),
+                tp_gap=item.get("twin_prime_stress_hierarchy_gap", float("nan")),
                 gate=item.get("padic_gate", float("nan")),
             )
         )
@@ -446,8 +468,8 @@ def write_trained_eval_markdown(path: Path, report: dict[str, object]) -> None:
             f"- Dataset: `{report['dataset']}`",
             f"- Device: `{report['device']}`",
             "",
-            "| Variant | AUROC | F1 | hierarchy corr | hierarchy gap | p-adic gate |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| Variant | AUROC | F1 | hierarchy corr | hierarchy gap | twin-prime corr | twin-prime gap | p-adic gate |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
             *rows,
             "",
         ]
@@ -529,7 +551,7 @@ def evaluate_trained_checkpoint(args: argparse.Namespace, device: torch.device) 
             batch_size=args.trained_eval_batch_size,
             device=device,
         )
-        for variant in ("true", "shuffled", "random")
+        for variant in ("true", "shuffled", "random", "twin_prime_stress")
     }
     return {
         "checkpoint": str(ckpt_path.relative_to(REPO_ROOT)),

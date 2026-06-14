@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .model import AnomalyHead, HenselEmbedding
+from .hensel import digits_to_int64
 
 
 def _attention_sparsity(weights: torch.Tensor, threshold: float = 1e-4) -> torch.Tensor:
@@ -38,22 +39,28 @@ def _finite_or_zero(value: torch.Tensor) -> torch.Tensor:
     return torch.where(torch.isfinite(value), value, value.new_tensor(0.0))
 
 
-def _attention_hierarchy_metrics(
-    weights: torch.Tensor,
-    digits: torch.Tensor,
-    key_padding_mask: torch.Tensor | None = None,
-) -> dict[str, torch.Tensor]:
-    if weights.ndim != 3:
-        raise ValueError("weights must have shape [batch, seq, seq]")
-    hard_prefix = _hard_prefix_matrix(digits).to(dtype=weights.dtype)
-    batch, seq, _ = hard_prefix.shape
-    valid = torch.ones((batch, seq), dtype=torch.bool, device=weights.device)
-    if key_padding_mask is not None:
-        valid = ~key_padding_mask
+def _prime_gaps(count: int) -> list[int]:
+    if count <= 0:
+        return []
 
-    valid_pairs = valid.unsqueeze(2) & valid.unsqueeze(1)
-    pair_mask = valid_pairs & ~torch.eye(seq, dtype=torch.bool, device=weights.device).unsqueeze(0)
+    gaps: list[int] = []
+    previous_prime = 2
+    candidate = 3
+    while len(gaps) < count:
+        is_prime = True
+        limit = int(math.isqrt(candidate))
+        for factor in range(3, limit + 1, 2):
+            if candidate % factor == 0:
+                is_prime = False
+                break
+        if is_prime:
+            gaps.append(candidate - previous_prime)
+            previous_prime = candidate
+        candidate += 2
+    return gaps
 
+
+def _subset_attention_metrics(weights: torch.Tensor, hard_prefix: torch.Tensor, pair_mask: torch.Tensor) -> dict[str, torch.Tensor]:
     same_cluster = pair_mask & (hard_prefix > 0)
     diff_cluster = pair_mask & (hard_prefix == 0)
     same_cluster_attention = _safe_masked_mean(weights, same_cluster)
@@ -73,18 +80,42 @@ def _attention_hierarchy_metrics(
         else:
             corr = (centered_weights @ centered_prefix) / denom
 
-    metrics = {
+    return {
         "padic_attention_corr": corr,
         "same_cluster_attention": same_cluster_attention,
         "diff_cluster_attention": diff_cluster_attention,
         "hierarchy_gap": hierarchy_gap,
     }
+
+
+def _attention_hierarchy_metrics(
+    weights: torch.Tensor,
+    digits: torch.Tensor,
+    p: int,
+    key_padding_mask: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    if weights.ndim != 3:
+        raise ValueError("weights must have shape [batch, seq, seq]")
+    hard_prefix = _hard_prefix_matrix(digits).to(dtype=weights.dtype)
+    batch, seq, _ = hard_prefix.shape
+    valid = torch.ones((batch, seq), dtype=torch.bool, device=weights.device)
+    if key_padding_mask is not None:
+        valid = ~key_padding_mask
+
+    valid_pairs = valid.unsqueeze(2) & valid.unsqueeze(1)
+    pair_mask = valid_pairs & ~torch.eye(seq, dtype=torch.bool, device=weights.device).unsqueeze(0)
+
+    metrics = _subset_attention_metrics(weights, hard_prefix, pair_mask)
     for depth in (1, 2, 4):
         same_depth = pair_mask & (hard_prefix >= depth)
         diff_depth = pair_mask & (hard_prefix < depth)
         same_depth_attention = _safe_masked_mean(weights, same_depth)
         diff_depth_attention = _safe_masked_mean(weights, diff_depth)
         metrics[f"attn_gap_depth{depth}"] = same_depth_attention - diff_depth_attention
+    token_ids = digits_to_int64(digits, p=p)
+    twin_prime_mask = pair_mask & ((token_ids.unsqueeze(2) - token_ids.unsqueeze(1)).abs() == 2)
+    twin_prime_metrics = _subset_attention_metrics(weights, hard_prefix, twin_prime_mask)
+    metrics.update({f"twin_prime_stress_{key}": value for key, value in twin_prime_metrics.items()})
     metrics = {key: _finite_or_zero(value) for key, value in metrics.items()}
     metrics["attention_sparsity"] = _finite_or_zero(_attention_sparsity(weights.masked_select(valid_pairs)))
     return metrics
@@ -123,17 +154,19 @@ class SoftPadicValuation(nn.Module):
         self.temperature_decay = temperature_decay
         self.hard_match = hard_match
 
+        gap_pattern = _prime_gaps(r)
+        init_temps = torch.tensor(
+            [max(1e-6, temperature * (1.0 + temperature_decay * float(gap))) for gap in gap_pattern],
+            dtype=torch.float32,
+        )
         if not hard_match:
             self.digit_embeddings = nn.ModuleList([nn.Embedding(p, d_digit) for _ in range(r)])
         else:
             self.digit_embeddings = nn.ModuleList()  # unused in hard mode
         if learn_temp:
-            self.log_temperature = nn.Parameter(torch.full((r,), math.log(temperature)))
-            with torch.no_grad():
-                for idx in range(r):
-                    self.log_temperature[idx] = math.log(temperature) - idx * temperature_decay
+            self.log_temperature = nn.Parameter(init_temps.log())
         else:
-            self.register_buffer("log_temperature", torch.full((r,), math.log(temperature)))
+            self.register_buffer("log_temperature", init_temps.log())
         self.prefix_weights = nn.Parameter(torch.ones(r))
         if not hard_match:
             self._reset_parameters()
@@ -301,7 +334,7 @@ class PadicAttentionHead(nn.Module):
         if not return_metrics:
             return out, weights
         metrics = {"padic_gate": self.padic_gate.sigmoid().detach()}
-        metrics.update(_attention_hierarchy_metrics(weights, digits, key_padding_mask))
+        metrics.update(_attention_hierarchy_metrics(weights, digits, self.valuation.p, key_padding_mask))
         return out, weights, metrics
 
 
@@ -342,6 +375,10 @@ class PadicMultiHeadAttention(nn.Module):
             "same_cluster_attention": [],
             "diff_cluster_attention": [],
             "hierarchy_gap": [],
+            "twin_prime_stress_padic_attention_corr": [],
+            "twin_prime_stress_same_cluster_attention": [],
+            "twin_prime_stress_diff_cluster_attention": [],
+            "twin_prime_stress_hierarchy_gap": [],
             "attn_gap_depth1": [],
             "attn_gap_depth2": [],
             "attn_gap_depth4": [],
@@ -476,6 +513,10 @@ class PadicAttentionEncoder(nn.Module):
             "same_cluster_attention": [],
             "diff_cluster_attention": [],
             "hierarchy_gap": [],
+            "twin_prime_stress_padic_attention_corr": [],
+            "twin_prime_stress_same_cluster_attention": [],
+            "twin_prime_stress_diff_cluster_attention": [],
+            "twin_prime_stress_hierarchy_gap": [],
             "attn_gap_depth1": [],
             "attn_gap_depth2": [],
             "attn_gap_depth4": [],

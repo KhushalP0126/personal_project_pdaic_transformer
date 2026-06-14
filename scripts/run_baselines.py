@@ -39,7 +39,7 @@ def run_step(name: str, fn):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
     parser.add_argument("--p", type=int, default=3)
     parser.add_argument("--r", type=int, default=8)
     parser.add_argument("--samples", type=int, default=4096)
@@ -65,6 +65,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_device(requested: str) -> torch.device:
+    mps_available = bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+    if requested == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if mps_available:
+            return torch.device("mps")
+        return torch.device("cpu")
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+    if requested == "mps" and not mps_available:
+        raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
+    return torch.device(requested)
+
+
 def safe_results_path(raw_path: str) -> Path:
     path = (REPO_ROOT / raw_path).resolve()
     results_root = (REPO_ROOT / "results").resolve()
@@ -76,7 +91,7 @@ def safe_results_path(raw_path: str) -> Path:
 
 def main() -> None:
     args = parse_args()
-    device = torch.device(args.device)
+    device = resolve_device(args.device)
     out_path = safe_results_path(args.output_json)
 
     benchmark_cfg = BenchmarkConfig(
@@ -241,6 +256,27 @@ def main() -> None:
             device=device,
         ),
     )
+    padic_twin_prime = run_step(
+        "padic_attention_twin_prime_stress",
+        lambda: run_padic_attention_baseline(
+            train_ds.windows,
+            train_ds.labels,
+            val_ds.windows,
+            val_ds.labels,
+            p=args.p,
+            r=args.r,
+            hierarchy_variant="twin_prime_stress",
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            d_digit=args.d_digit,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            pos_weight=pos_weight,
+            device=device,
+        ),
+    )
 
     report = {
         "dataset": "hierarchy_rules" if args.hierarchy_rule_dataset else "realistic",
@@ -253,6 +289,7 @@ def main() -> None:
         "padic_attention_true": padic_true,
         "padic_attention_shuffled": padic_shuffled,
         "padic_attention_random": padic_random,
+        "padic_attention_twin_prime_stress": padic_twin_prime,
     }
     out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Wrote {out_path.relative_to(REPO_ROOT)}")

@@ -29,6 +29,12 @@ class TestSoftPadicValuation(unittest.TestCase):
         out = valuation(a, b)
         self.assertEqual(out.shape, (4,))
 
+    def test_prime_gap_temperature_initialization_is_bumpy(self) -> None:
+        valuation = SoftPadicValuation(p=3, r=5, d_digit=8, temperature=1.0, temperature_decay=0.1)
+        temps = valuation.log_temperature.exp()
+        expected = torch.tensor([1.1, 1.2, 1.2, 1.4, 1.2], dtype=temps.dtype)
+        torch.testing.assert_close(temps, expected, atol=1e-6, rtol=0.0)
+
     def test_r1_temperature_stats_and_loss_are_finite(self) -> None:
         valuation = SoftPadicValuation(p=3, r=1, d_digit=8)
         stats = valuation.temperature_stats()
@@ -82,6 +88,10 @@ class TestPadicAttentionHead(unittest.TestCase):
             "same_cluster_attention",
             "diff_cluster_attention",
             "hierarchy_gap",
+            "twin_prime_stress_padic_attention_corr",
+            "twin_prime_stress_same_cluster_attention",
+            "twin_prime_stress_diff_cluster_attention",
+            "twin_prime_stress_hierarchy_gap",
             "attn_gap_depth1",
             "attn_gap_depth2",
             "attn_gap_depth4",
@@ -208,6 +218,10 @@ class TestPadicAttentionAnomalyDetector(unittest.TestCase):
             "same_cluster_attention",
             "diff_cluster_attention",
             "hierarchy_gap",
+            "twin_prime_stress_padic_attention_corr",
+            "twin_prime_stress_same_cluster_attention",
+            "twin_prime_stress_diff_cluster_attention",
+            "twin_prime_stress_hierarchy_gap",
             "attn_gap_depth1",
             "attn_gap_depth2",
             "attn_gap_depth4",
@@ -217,6 +231,7 @@ class TestPadicAttentionAnomalyDetector(unittest.TestCase):
         sparsity = float(metrics["attention_sparsity"].item())
         self.assertGreaterEqual(sparsity, 0.0)
         self.assertLessEqual(sparsity, 1.0)
+        self.assertTrue(torch.isfinite(metrics["twin_prime_stress_hierarchy_gap"]).item())
 
     def test_forward_with_attention_features(self) -> None:
         model = PadicAttentionAnomalyDetector(

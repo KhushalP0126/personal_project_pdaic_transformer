@@ -881,8 +881,8 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke-test", action="store_true",
                         help="Run GPU smoke test and exit")
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"],
-                        help="Compute device (default: cpu)")
+    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"],
+                        help="Compute device (default: auto)")
     parser.add_argument("--p-list", nargs="+", type=int, default=[2],
                         help="List of primes (default: 2)")
     parser.add_argument("--r-list", nargs="+", type=int, default=[8, 16, 32],
@@ -899,11 +899,27 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_device(requested: str) -> torch.device:
+    mps_available = bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+    if requested == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if mps_available:
+            return torch.device("mps")
+        return torch.device("cpu")
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+    if requested == "mps" and not mps_available:
+        raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
+    return torch.device(requested)
+
+
 def main() -> None:
     args = _parse_args()
+    device = resolve_device(args.device)
 
     if args.smoke_test:
-        gpu_smoke_test(device_str=args.device)
+        gpu_smoke_test(device_str=device.type)
         return
 
     cfg = SweepConfig(
@@ -912,7 +928,7 @@ def main() -> None:
         modes            = args.modes,
         n_samples        = args.samples,
         n_classes        = args.classes,
-        device           = args.device,
+        device           = device.type,
         batch_size       = args.batch_size,
         chunk_size       = args.chunk_size,
         seed             = args.seed,

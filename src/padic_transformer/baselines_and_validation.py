@@ -42,7 +42,7 @@ def _remap_hierarchy_windows(
 ) -> torch.Tensor:
     if variant == "true":
         return windows
-    if variant not in {"shuffled", "random"}:
+    if variant not in {"shuffled", "random", "twin_prime_stress"}:
         raise ValueError(f"unknown hierarchy variant: {variant}")
 
     ids = _token_ids_from_digits(windows, p)
@@ -53,6 +53,9 @@ def _remap_hierarchy_windows(
 
     if variant == "shuffled":
         remapped_vocab = unique_ids[torch.randperm(unique_ids.numel(), generator=rng, device=windows.device)]
+    elif variant == "twin_prime_stress":
+        modulus = p ** windows.shape[-1]
+        remapped_vocab = (unique_ids + 2).remainder(modulus)
     else:
         random_digits = torch.randint(
             0,

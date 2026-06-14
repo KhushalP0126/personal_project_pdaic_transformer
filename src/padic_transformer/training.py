@@ -657,6 +657,11 @@ def train(
                 f"hgap={val_metrics['hierarchy_gap']:.4f}  "
                 f"gate={val_metrics['padic_gate']:.4f}  "
             )
+        if "twin_prime_stress_hierarchy_gap" in val_metrics:
+            attn_suffix += (
+                f"tp_gap={val_metrics['twin_prime_stress_hierarchy_gap']:.4f}  "
+                f"tp_corr={val_metrics.get('twin_prime_stress_padic_attention_corr', 0.0):.4f}  "
+            )
 
         epoch_record = {
             "epoch": epoch,
