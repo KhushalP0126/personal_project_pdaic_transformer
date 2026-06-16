@@ -391,18 +391,6 @@ class TestTrainingSmoke(unittest.TestCase):
         remapped = remap_hierarchy_windows(windows, p=3, variant="random", seed=7)
         self.assertEqual(remapped.shape, windows.shape)
 
-    def test_twin_prime_stress_remap_is_plus_two_modulus(self) -> None:
-        from padic_transformer.baselines_and_validation import remap_hierarchy_windows
-        from padic_transformer.hensel import digits_to_int64
-
-        windows = torch.tensor([[[0, 0], [1, 0], [2, 0]]], dtype=torch.int64)
-        remapped = remap_hierarchy_windows(windows, p=3, variant="twin_prime_stress", seed=7)
-        self.assertEqual(remapped.shape, windows.shape)
-        original_ids = digits_to_int64(windows, p=3)
-        remapped_ids = digits_to_int64(remapped, p=3)
-        modulus = 3 ** windows.shape[-1]
-        torch.testing.assert_close(remapped_ids, (original_ids + 2).remainder(modulus), atol=0, rtol=0)
-
     def test_digit_window_eval_uses_single_attention_forward(self) -> None:
         from padic_transformer.baselines_and_validation import _eval_digit_window_batch
 

@@ -112,10 +112,43 @@ def _attention_hierarchy_metrics(
         same_depth_attention = _safe_masked_mean(weights, same_depth)
         diff_depth_attention = _safe_masked_mean(weights, diff_depth)
         metrics[f"attn_gap_depth{depth}"] = same_depth_attention - diff_depth_attention
-    token_ids = digits_to_int64(digits, p=p)
-    twin_prime_mask = pair_mask & ((token_ids.unsqueeze(2) - token_ids.unsqueeze(1)).abs() == 2)
-    twin_prime_metrics = _subset_attention_metrics(weights, hard_prefix, twin_prime_mask)
-    metrics.update({f"twin_prime_stress_{key}": value for key, value in twin_prime_metrics.items()})
+    try:
+        flat_weights = weights.masked_select(pair_mask).float()
+        flat_ids = digits_to_int64(digits.view(-1, digits.shape[-1]), p=p)
+        flat_ids_mat = flat_ids.view(digits.shape[0], digits.shape[1])
+        id_diff = (flat_ids_mat.unsqueeze(2) - flat_ids_mat.unsqueeze(1)).abs().float()
+        flat_id_diff = id_diff.masked_select(pair_mask)
+        if flat_weights.numel() < 2 or flat_id_diff.std() < 1e-6:
+            tp_corr = weights.new_tensor(0.0)
+            tp_gap = weights.new_tensor(0.0)
+        else:
+            cw = flat_weights - flat_weights.mean()
+            cd = flat_id_diff - flat_id_diff.mean()
+            denom = cw.norm() * cd.norm()
+            tp_corr = -(cw @ cd) / denom if float(denom.item()) > 0 else weights.new_tensor(0.0)
+            median_diff = flat_id_diff.median()
+            close_mask_flat = flat_id_diff <= median_diff
+            far_mask_flat = ~close_mask_flat
+            close_attn = flat_weights[close_mask_flat].mean() if close_mask_flat.any() else weights.new_tensor(0.0)
+            far_attn = flat_weights[far_mask_flat].mean() if far_mask_flat.any() else weights.new_tensor(0.0)
+            tp_gap = close_attn - far_attn
+        metrics["twin_prime_stress_padic_attention_corr"] = _finite_or_zero(tp_corr)
+        metrics["twin_prime_stress_hierarchy_gap"] = _finite_or_zero(tp_gap)
+        metrics["twin_prime_stress_same_cluster_attention"] = _finite_or_zero(
+            weights.masked_select(pair_mask & (hard_prefix > 0)).mean()
+            if (pair_mask & (hard_prefix > 0)).any()
+            else weights.new_tensor(0.0)
+        )
+        metrics["twin_prime_stress_diff_cluster_attention"] = _finite_or_zero(
+            weights.masked_select(pair_mask & (hard_prefix == 0)).mean()
+            if (pair_mask & (hard_prefix == 0)).any()
+            else weights.new_tensor(0.0)
+        )
+    except OverflowError:
+        metrics["twin_prime_stress_padic_attention_corr"] = weights.new_tensor(0.0)
+        metrics["twin_prime_stress_hierarchy_gap"] = weights.new_tensor(0.0)
+        metrics["twin_prime_stress_same_cluster_attention"] = weights.new_tensor(0.0)
+        metrics["twin_prime_stress_diff_cluster_attention"] = weights.new_tensor(0.0)
     metrics = {key: _finite_or_zero(value) for key, value in metrics.items()}
     metrics["attention_sparsity"] = _finite_or_zero(_attention_sparsity(weights.masked_select(valid_pairs)))
     return metrics
