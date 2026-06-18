@@ -30,6 +30,7 @@ COMPARE_ANALYSIS_ARGS ?= --p-list 3 5 7 --output-json results/prime_comparison.j
 OPEN_DATASET_ADFA_ARGS ?= --dataset adfa --data-dir ./data/adfa --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device $(ACCEL_DEVICE)
 OPEN_DATASET_BETH_ARGS ?= --dataset beth --data-dir ./data/beth --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device $(ACCEL_DEVICE)
 OPEN_DATASET_STATS_ARGS ?= --dataset adfa --data-dir ./data/adfa --stats-only --no-download --p 3 --r 8 --window-size 32 --stride 4 --device cpu
+CPU_ADFA_COMP_ARGS ?= --data-dir ./data/adfa --device cpu --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 3 --batch-size 1024 --alpha 0.0 --output-json results/cpu_adfa_comp.json --output-md results/cpu_adfa_comp.md
 
 # ---------------------------------------------------------------------------
 # Analysis defaults
@@ -46,7 +47,7 @@ INT8_ARGS ?= --r 8
 .PHONY: all setup test cpu gpu benchmark run \
         int8 hardware \
         smoke train vanilla hierarchy realistic primes pdaic-primes compare-analysis sweep baselines eval threshold diagnose ablate \
-        adfa beth adfa-stats \
+        adfa beth adfa-stats cpu_adfa_comp \
         train-attention-cpu train-attention-bce-gpu train-attention-hierarchy-gpu train-attention-realistic-gpu \
         compare-primes sweep-p-bases run-baselines eval-trained-attention tune-threshold over-underfit \
         open-adfa open-beth open-adfa-stats \
@@ -177,6 +178,9 @@ beth: setup
 adfa-stats: setup
 	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_STATS_ARGS)
 
+cpu_adfa_comp: setup
+	$(VENV_PYTHON) scripts/compare_adfa_models.py $(CPU_ADFA_COMP_ARGS)
+
 open-adfa: adfa
 open-beth: beth
 open-adfa-stats: adfa-stats
@@ -234,6 +238,7 @@ help:
 	@echo "  make adfa            Download ADFA-LD if needed and run the open dataset benchmark"
 	@echo "  make beth            Download BETH with Kaggle CLI if needed and run the benchmark"
 	@echo "  make adfa-stats      Show local ADFA-LD stats only, no download or training"
+	@echo "  make cpu_adfa_comp   Compare vanilla vs PDAIC attention on ADFA-LD for 3 CPU epochs"
 	@echo "  make analysis        Run the analysis workflows"
 	@echo "  make int8            Verify unsigned INT8 against 2-adic arithmetic"
 	@echo "  make ablate          Run the full ablation suite"

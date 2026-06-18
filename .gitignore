@@ -8,5 +8,6 @@ build/
 dist/
 *.egg-info/
 results/
+data/
 *.zip
 context.md

@@ -175,6 +175,8 @@ This is the cleanest dataset for testing whether the hierarchy itself helps.
 - IsolationForest comparison
 - repeated runs across seeds
 
+`scripts/compare_adfa_models.py` runs a direct CPU comparison between the vanilla Hensel transformer and PDAIC attention on ADFA-LD. The default `make cpu_adfa_comp` target uses the real ADFA windows, trains both models for three epochs with the same split/settings, and writes `results/cpu_adfa_comp.json` plus `results/cpu_adfa_comp.md`.
+
 ## Model
 
 ### Hensel embedding
@@ -331,6 +333,7 @@ make train
 - `make adfa` downloads ADFA-LD if needed and benchmarks it, using `git` first and a GitHub ZIP fallback second.
 - `make beth` downloads and benchmarks BETH. It needs Kaggle credentials or local BETH CSV files under `data/beth`.
 - `make adfa-stats` prints local ADFA-LD stats without training or download. Run `make adfa` first, or place the extracted dataset under `data/adfa/ADFA-LD`.
+- `make cpu_adfa_comp` compares vanilla vs PDAIC attention on ADFA-LD for three CPU epochs and writes JSON/Markdown reports under `results/`.
 - `make open-adfa`, `make open-beth`, and `make open-adfa-stats` are aliases for the corresponding dataset targets.
 
 ### 2-Adic / Hardware
