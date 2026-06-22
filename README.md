@@ -167,15 +167,13 @@ This is the cleanest dataset for testing whether the hierarchy itself helps.
 
 ### Open datasets
 
-`scripts/run_open_dataset.py` can benchmark ADFA-LD or BETH. It reports:
+`scripts/run_open_dataset.py` can benchmark BETH. It reports:
 
 - real attack rate
 - estimated `pos_weight`
 - ultrametric verdict
 - IsolationForest comparison
 - repeated runs across seeds
-
-`scripts/compare_adfa_models.py` runs a direct CPU comparison between the vanilla Hensel transformer and PDAIC attention on ADFA-LD. The default `make cpu_adfa_comp` target uses the real ADFA windows, trains both models for three epochs with the same split/settings, and writes `results/cpu_adfa_comp.json` plus `results/cpu_adfa_comp.md`.
 
 ## Model
 
@@ -261,7 +259,6 @@ The current codebase is built for host intrusion detection, but the reusable ide
 
 | Application domain | Readiness | Codebase components reused | Required changes | Estimated pivot time |
 |---|---:|---|---|---|
-| Host intrusion detection, including ADFA-LD | 100% | Existing models, pipelines, dataloaders, Makefile targets, and evaluation scripts. | None. This is the native baseline target. | 0 hours |
 | IP routing and network analytics | 95% | Core transformer, p-adic attention, evaluation scripts, and classification head. | Add a converter from raw PCAP/network logs or IP strings into token sequences. | 2-4 hours |
 | Lexical semantics and WordNet | 75% | Core transformer, p-adic attention, and classification head. | Replace the syscall tokenizer with a parser that maps words to WordNet tree/path IDs. | 1 day |
 | Genomics and phylogenetics | 45% | Token embedding layer, classification head, and training loop. | Modify attention to accept a supplied evolutionary-tree distance matrix instead of computing shared-prefix distances from sequence digits. | 3-5 days |
@@ -276,7 +273,7 @@ The nearest pivot is IP routing. IP addresses are already hierarchical discrete 
 3. Run the baseline suite.
 4. Evaluate a trained checkpoint against true, shuffled, and random hierarchy.
 5. Move to the realistic dataset path.
-6. Validate on ADFA-LD or BETH.
+6. Validate on BETH or an IP/network-traffic dataset.
 7. Repeat the main runs across multiple seeds.
 
 ## Quick Start
@@ -324,13 +321,11 @@ make train
 - `make threshold` runs the GPU training path with threshold tuning output.
 - `make diagnose` runs the learning-vs-overfit diagnostic.
 - `make audit` audits synthetic datasets for imbalance, leakage, train/validation overlap, and obvious artifacts.
+- `make ip-cpu` runs the CPU IP-prefix synthetic experiment and writes `results/ip_synthetic.json` plus `results/ip_synthetic.md`.
 
 ### Open Datasets
 
-- `make adfa` downloads ADFA-LD if needed and benchmarks it, using `git` first and a GitHub ZIP fallback second.
 - `make beth` downloads and benchmarks BETH. It needs Kaggle credentials or local BETH CSV files under `data/beth`.
-- `make adfa-stats` prints local ADFA-LD stats without training or download. Run `make adfa` first, or place the extracted dataset under `data/adfa/ADFA-LD`.
-- `make cpu_adfa_comp` compares vanilla vs PDAIC attention on ADFA-LD for three CPU epochs and writes JSON/Markdown reports under `results/`.
 
 ### 2-Adic / Hardware
 

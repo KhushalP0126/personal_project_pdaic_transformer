@@ -27,12 +27,10 @@ SWEEP_P_ARGS ?= --sweep-p-bases --device cpu --p-list 3 5 7 --sweep-r 8 --sweep-
 BASELINE_RULE_ARGS ?= --device $(ACCEL_DEVICE) --hierarchy-rule-dataset --p 3 --r 16 --samples 16384 --classes 32 --tokens-per-class 128 --window-size 32 --attack-fraction 0.30 --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --train-samples 32768 --val-samples 4096 --epochs 20 --batch-size 128 --lr 2e-4 --d-model 192 --n-heads 4 --n-layers 3 --d-digit 8 --output-json results/baseline_report.json
 TRAINED_EVAL_ARGS ?= --device $(ACCEL_DEVICE) --trained-eval-checkpoint results/checkpoints/best.pt --trained-eval-dataset hierarchy_rules --trained-eval-samples 512 --trained-eval-window-size 32 --trained-eval-attack-fraction 0.30 --trained-eval-batch-size 64
 COMPARE_ANALYSIS_ARGS ?= --p-list 3 5 7 --output-json results/prime_comparison.json --output-md results/prime_comparison.md
-OPEN_DATASET_ADFA_ARGS ?= --dataset adfa --data-dir ./data/adfa --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device $(ACCEL_DEVICE)
 OPEN_DATASET_BETH_ARGS ?= --dataset beth --data-dir ./data/beth --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device $(ACCEL_DEVICE)
-OPEN_DATASET_STATS_ARGS ?= --dataset adfa --data-dir ./data/adfa --stats-only --no-download --p 3 --r 8 --window-size 32 --stride 4 --device cpu
-CPU_ADFA_COMP_ARGS ?= --data-dir ./data/adfa --device cpu --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 3 --batch-size 1024 --alpha 0.0 --output-json results/cpu_adfa_comp.json --output-md results/cpu_adfa_comp.md
 CPU_ONE_EPOCH_TRAIN_ARGS ?= --device cpu --p 3 --r 8 --d-model 32 --n-heads 4 --n-layers 1 --ffn-dim 64 --head-hidden 16 --dropout 0.1 --window-size 16 --attack-fraction 0.30 --attack-min-len 2 --attack-max-len 4 --n-train 256 --n-val 64 --samples 512 --classes 8 --tokens-per-class 32 --epochs 1 --batch-size 32 --lr 3e-4 --num-workers 0 --alpha 0.0 --save-every 999 --max-seq-len 32
 CPU_ONE_EPOCH_BASELINE_ARGS ?= --device cpu --hierarchy-rule-dataset --p 3 --r 8 --samples 512 --classes 8 --tokens-per-class 32 --window-size 16 --attack-fraction 0.30 --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --train-samples 256 --val-samples 64 --epochs 1 --batch-size 32 --lr 2e-4 --d-model 32 --n-heads 4 --n-layers 1 --d-digit 8 --output-json results/cpu_1epoch_baselines.json
+IP_CPU_ARGS ?= --device cpu --train-samples 512 --val-samples 128 --window-size 16 --prefix-len 24 --num-prefixes 16 --attack-fraction 0.30 --attack-min-len 1 --attack-max-len 4 --epochs 1 --batch-size 128 --lr 3e-4 --d-model 64 --n-heads 4 --n-layers 1 --d-digit 8 --output-json results/ip_synthetic.json --output-md results/ip_synthetic.md
 
 # ---------------------------------------------------------------------------
 # Analysis defaults
@@ -49,7 +47,7 @@ INT8_ARGS ?= --r 8
 .PHONY: all setup test cpu gpu \
         int8 hardware \
         smoke train vanilla hierarchy realistic primes pdaic-primes compare-analysis sweep baselines eval threshold diagnose ablate \
-        adfa beth adfa-stats cpu_adfa_comp audit cpu-all-1epoch \
+        beth audit cpu-all-1epoch ip-cpu \
         ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7 \
         clean help clean-results clean-caches clean-checkpoints
 
@@ -153,17 +151,8 @@ ablate: ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 a
 # ---------------------------------------------------------------------------
 # Open datasets
 # ---------------------------------------------------------------------------
-adfa: setup
-	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_ADFA_ARGS)
-
 beth: setup
 	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_BETH_ARGS)
-
-adfa-stats: setup
-	$(VENV_PYTHON) scripts/run_open_dataset.py $(OPEN_DATASET_STATS_ARGS)
-
-cpu_adfa_comp: setup
-	$(VENV_PYTHON) scripts/compare_adfa_models.py $(CPU_ADFA_COMP_ARGS)
 
 audit: setup
 	$(VENV_PYTHON) scripts/audit_datasets.py
@@ -180,6 +169,9 @@ cpu-all-1epoch: setup
 	@printf "\n[####################] 5/5 baseline suite\n"
 	$(VENV_PYTHON) scripts/run_baselines.py $(CPU_ONE_EPOCH_BASELINE_ARGS)
 	@printf "\n[####################] done CPU one-epoch sweep\n"
+
+ip-cpu: setup
+	$(VENV_PYTHON) scripts/run_ip_experiment.py $(IP_CPU_ARGS)
 
 # ---------------------------------------------------------------------------
 # Analysis
@@ -231,12 +223,10 @@ help:
 	@echo "  make eval            Evaluate a trained checkpoint on true/shuffled/random hierarchy"
 	@echo "  make threshold       Run training with validation threshold search"
 	@echo "  make diagnose        Run the learning vs generalization diagnostic"
-	@echo "  make adfa            Download ADFA-LD if needed and run the open dataset benchmark"
 	@echo "  make beth            Download BETH with Kaggle CLI if needed and run the benchmark"
-	@echo "  make adfa-stats      Show local ADFA-LD stats only, no download or training"
-	@echo "  make cpu_adfa_comp   Compare vanilla vs PDAIC attention on ADFA-LD for 3 CPU epochs"
 	@echo "  make audit           Audit synthetic datasets for imbalance, leakage, and artifacts"
 	@echo "  make cpu-all-1epoch  Run one CPU epoch across vanilla, PDAIC, hierarchy, realistic, and baselines"
+	@echo "  make ip-cpu          Run the CPU IP-prefix synthetic experiment"
 	@echo "  make analysis        Run the analysis workflows"
 	@echo "  make int8            Verify unsigned INT8 against 2-adic arithmetic"
 	@echo "  make ablate          Run the full ablation suite"

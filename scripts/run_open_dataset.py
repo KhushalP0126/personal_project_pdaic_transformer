@@ -10,9 +10,6 @@ import shutil
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
-import zipfile
 from collections import Counter
 from pathlib import Path
 
@@ -33,13 +30,6 @@ from padic_transformer.model import PadicAnomalyDetector
 from padic_transformer.model_fixes import StreamingWindowScorer, quantize_dynamic_model
 from padic_transformer.ultrametric import ultrametric_violation_rate
 
-ADFA_REPO_URL = "https://github.com/verazuo/a-labelled-version-of-the-ADFA-LD-dataset.git"
-ADFA_ARCHIVE_URLS = [
-    "https://github.com/verazuo/a-labelled-version-of-the-ADFA-LD-dataset/archive/refs/heads/main.zip",
-    "https://github.com/verazuo/a-labelled-version-of-the-ADFA-LD-dataset/archive/refs/heads/master.zip",
-]
-ADFA_SYSCALL_VOCAB_SIZE = 200
-
 
 def safe_results_path(raw_path: str) -> Path:
     path = (REPO / raw_path).resolve()
@@ -48,56 +38,6 @@ def safe_results_path(raw_path: str) -> Path:
         raise ValueError("outputs must be written under results/")
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def download_adfa(data_dir: Path) -> Path:
-    repo_dir = data_dir / "a-labelled-version-of-the-ADFA-LD-dataset"
-    if repo_dir.exists():
-        return repo_dir
-
-    data_dir.mkdir(parents=True, exist_ok=True)
-    if shutil.which("git") is not None:
-        result = subprocess.run(
-            ["git", "clone", "--depth", "1", ADFA_REPO_URL, str(repo_dir)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            zip_path = repo_dir / "ADFA-LD.zip"
-            if zip_path.exists():
-                with zipfile.ZipFile(zip_path, "r") as zf:
-                    zf.extractall(repo_dir)
-            return repo_dir
-
-    archive_path = data_dir / "adfa_ld_source.zip"
-    errors: list[str] = []
-    for url in ADFA_ARCHIVE_URLS:
-        try:
-            urllib.request.urlretrieve(url, archive_path)
-            with zipfile.ZipFile(archive_path, "r") as zf:
-                zf.extractall(data_dir)
-            extracted_dirs = sorted(
-                path
-                for path in data_dir.glob("a-labelled-version-of-the-ADFA-LD-dataset-*")
-                if path.is_dir()
-            )
-            if not extracted_dirs:
-                raise RuntimeError("archive did not contain the expected ADFA-LD directory")
-            extracted = extracted_dirs[0]
-            extracted.rename(repo_dir)
-            zip_path = repo_dir / "ADFA-LD.zip"
-            if zip_path.exists():
-                with zipfile.ZipFile(zip_path, "r") as zf:
-                    zf.extractall(repo_dir)
-            return repo_dir
-        except (OSError, RuntimeError, urllib.error.URLError, zipfile.BadZipFile) as exc:
-            errors.append(f"{url}: {exc}")
-
-    raise RuntimeError(
-        "Could not download ADFA-LD. Install git, allow GitHub ZIP downloads, "
-        "or manually place the extracted dataset under data/adfa/ADFA-LD.\n"
-        + "\n".join(errors)
-    )
 
 
 def download_beth(data_dir: Path) -> Path:
@@ -129,121 +69,6 @@ def download_beth(data_dir: Path) -> Path:
             "Install kaggle CLI and configure credentials, or download manually."
         )
     return data_dir
-
-
-def _read_trace_file(filepath: Path) -> list[int]:
-    text = filepath.read_text(encoding="utf-8", errors="ignore")
-    return [int(x) for x in text.split() if x.strip().isdigit()]
-
-
-def _build_vocab(all_traces: list[list[int]], max_vocab: int) -> dict[int, int]:
-    counter: Counter[int] = Counter()
-    for trace in all_traces:
-        counter.update(trace)
-    top = [sid for sid, _ in counter.most_common(max_vocab)]
-    return {sid: idx for idx, sid in enumerate(top)}
-
-
-def load_adfa_ld(
-    data_dir: Path,
-    p: int = 3,
-    r: int = 8,
-    window_size: int = 32,
-    stride: int = 4,
-    max_vocab: int = ADFA_SYSCALL_VOCAB_SIZE,
-    download: bool = True,
-) -> tuple[torch.Tensor, torch.Tensor, dict[str, object], list[str]]:
-    if download:
-        repo_dir = download_adfa(data_dir)
-    else:
-        repo_dir = data_dir
-
-    adfa_root = repo_dir / "ADFA-LD"
-    if not adfa_root.exists():
-        adfa_root = repo_dir
-    if not adfa_root.exists():
-        raise FileNotFoundError(
-            f"Could not find ADFA-LD directory under {repo_dir}. "
-            "Run `make adfa` to download it, or place the extracted dataset under data/adfa/ADFA-LD."
-        )
-
-    raw_traces: list[tuple[list[int], int, str]] = []
-    for split_name, label in [("Training_Data_Master", 0), ("Validation_Data_Master", 0)]:
-        split_dir = adfa_root / split_name
-        if not split_dir.exists():
-            continue
-        for fp in sorted(split_dir.glob("*.txt")):
-            ids = _read_trace_file(fp)
-            if ids:
-                raw_traces.append((ids, label, split_name))
-
-    attack_dir = adfa_root / "Attack_Data_Master"
-    if attack_dir.exists():
-        for family_dir in sorted(attack_dir.iterdir()):
-            if not family_dir.is_dir():
-                continue
-            for fp in sorted(family_dir.glob("*.txt")):
-                ids = _read_trace_file(fp)
-                if ids:
-                    raw_traces.append((ids, 1, family_dir.name))
-
-    if not raw_traces:
-        raise RuntimeError(f"No trace files found under {adfa_root}")
-
-    normal_traces = [ids for ids, lbl, _ in raw_traces if lbl == 0]
-    vocab = _build_vocab(normal_traces, max_vocab)
-    oov_idx = max_vocab
-    vocab_size = max_vocab + 1
-
-    all_windows: list[torch.Tensor] = []
-    all_labels: list[float] = []
-    all_families: list[str] = []
-    trace_lengths: list[int] = []
-
-    for trace_ids, label, _source in raw_traces:
-        compact = [vocab.get(sid, oov_idx) for sid in trace_ids]
-        trace_lengths.append(len(compact))
-        if len(compact) < window_size:
-            compact = compact + [oov_idx] * (window_size - len(compact))
-
-        id_tensor = torch.tensor(compact, dtype=torch.int64)
-        id_clamped = id_tensor.clamp(0, p**r - 1)
-        digit_seq = int64_to_digits(id_clamped, p=p, r=r)
-        n_windows = max(1, (len(compact) - window_size) // stride + 1)
-        for i in range(n_windows):
-            start = i * stride
-            end = start + window_size
-            if end > digit_seq.shape[0]:
-                break
-            all_windows.append(digit_seq[start:end].clone())
-            all_labels.append(float(label))
-            all_families.append("normal" if label == 0 else str(_source))
-
-    windows_tensor = torch.stack(all_windows)
-    labels_tensor = torch.tensor(all_labels, dtype=torch.float32)
-
-    n_pos = int(labels_tensor.sum().item())
-    n_neg = len(labels_tensor) - n_pos
-    stats: dict[str, object] = {
-        "n_windows": len(labels_tensor),
-        "n_normal": n_neg,
-        "n_attack": n_pos,
-        "real_attack_rate": n_pos / max(1, len(labels_tensor)),
-        "pos_weight": n_neg / max(1, n_pos),
-        "vocab_size": vocab_size,
-        "mean_trace_len": sum(trace_lengths) / max(1, len(trace_lengths)),
-        "min_trace_len": min(trace_lengths),
-        "max_trace_len": max(trace_lengths),
-        "p": p,
-        "r": r,
-        "window_size": window_size,
-        "stride": stride,
-    }
-    stats["attack_family_counts"] = {
-        family: all_families.count(family)
-        for family in sorted({family for family in all_families if family != "normal"})
-    }
-    return windows_tensor, labels_tensor, stats, all_families
 
 
 def _read_beth_csvs(data_path: Path, max_rows: int) -> list[dict[str, str]]:
@@ -508,7 +333,7 @@ def train_and_eval(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", choices=["adfa", "beth"], default="adfa")
+    parser.add_argument("--dataset", choices=["beth"], default="beth")
     parser.add_argument("--data-dir", default="./data")
     parser.add_argument("--p", type=int, default=3)
     parser.add_argument("--r", type=int, default=8)
@@ -587,25 +412,15 @@ def main() -> None:
     data_dir = Path(args.data_dir)
 
     try:
-        if args.dataset == "adfa":
-            windows, labels, stats, families = load_adfa_ld(
-                data_dir,
-                p=args.p,
-                r=args.r,
-                window_size=args.window_size,
-                stride=args.stride,
-                download=not args.no_download,
-            )
-        else:
-            if not args.no_download:
-                download_beth(data_dir)
-            windows, labels, stats, families = load_beth(
-                data_dir,
-                p=args.p,
-                r=args.r,
-                window_size=args.window_size,
-                stride=args.stride,
-            )
+        if not args.no_download:
+            download_beth(data_dir)
+        windows, labels, stats, families = load_beth(
+            data_dir,
+            p=args.p,
+            r=args.r,
+            window_size=args.window_size,
+            stride=args.stride,
+        )
     except (FileNotFoundError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)

@@ -618,15 +618,6 @@ def evaluate_attention_model(
 
 
 DATASET_GUIDE: dict[str, dict[str, str]] = {
-    "ADFA-LD": {
-        "what": "Linux syscall traces from real attack scenarios.",
-        "why": "Best structural match for p-adic syscall sequences.",
-        "how_to_map": "Map syscall IDs to Hensel digits using your prime base mapping.",
-        "url": "https://research.unsw.edu.au/projects/adfa-ids-datasets",
-        "format": "Text files, one syscall ID per line",
-        "size": "~130MB",
-        "caveat": "Labels are trace-level, so use weak supervision.",
-    },
     "BETH": {
         "what": "Large-scale Linux audit logs from honeypots.",
         "why": "Modern, larger, and rich in event types.",
@@ -651,62 +642,3 @@ DATASET_GUIDE: dict[str, dict[str, str]] = {
 def print_dataset_guide() -> None:
     for name, info in DATASET_GUIDE.items():
         print(f"{name}: {info['what']} -> {info['url']}")
-
-
-def load_adfa_ld(
-    data_dir: str,
-    syscall_map: dict[str, int] | None = None,
-    p: int = 3,
-    r: int = 8,
-    window_size: int = 32,
-    stride: int = 1,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    data_path = Path(data_dir)
-    if not data_path.exists():
-        raise FileNotFoundError(f"ADFA-LD data directory not found: {data_dir}")
-
-    def read_trace(filepath: Path) -> list[int]:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return [int(x) for x in f.read().split() if x.strip().isdigit()]
-
-    def trace_to_windows(syscall_ids: list[int], label: float) -> tuple[list[torch.Tensor], list[float]]:
-        if len(syscall_ids) < window_size:
-            return [], []
-        ids_tensor = torch.tensor(syscall_ids, dtype=torch.int64)
-        max_val = p**r - 1
-        ids_clamped = ids_tensor.clamp(0, max_val)
-        digit_seq = int64_to_digits(ids_clamped, p=p, r=r)
-        wins, labs = [], []
-        for start in range(0, len(syscall_ids) - window_size + 1, stride):
-            wins.append(digit_seq[start : start + window_size])
-            labs.append(label)
-        return wins, labs
-
-    all_windows: list[torch.Tensor] = []
-    all_labels: list[float] = []
-
-    normal_dir = data_path / "Training_Data_Master"
-    if normal_dir.exists():
-        for filepath in sorted(normal_dir.glob("*.txt")):
-            ids = read_trace(filepath)
-            wins, labs = trace_to_windows(ids, label=0.0)
-            all_windows.extend(wins)
-            all_labels.extend(labs)
-
-    attack_dir = data_path / "Attack_Data_Master"
-    if attack_dir.exists():
-        for attack_family in sorted(attack_dir.iterdir()):
-            if not attack_family.is_dir():
-                continue
-            for filepath in sorted(attack_family.glob("*.txt")):
-                ids = read_trace(filepath)
-                wins, labs = trace_to_windows(ids, label=1.0)
-                all_windows.extend(wins)
-                all_labels.extend(labs)
-
-    if not all_windows:
-        raise RuntimeError(f"No trace files found in {data_dir}")
-
-    windows_tensor = torch.stack(all_windows)
-    labels_tensor = torch.tensor(all_labels, dtype=torch.float32)
-    return windows_tensor, labels_tensor
