@@ -27,7 +27,7 @@ from padic_transformer.baselines_and_validation import (
 from padic_transformer.config import BenchmarkConfig
 from padic_transformer.dataset_hierarchy_rules import HierarchyRuleDataset, HierarchyRuleDatasetConfig
 from padic_transformer.dataset_realistic import RealisticBusDataset, RealisticDatasetConfig
-from padic_transformer.ultrametric import generate_clustered_hensel_dataset
+from padic_transformer.ultrametric import derive_seed, generate_clustered_hensel_dataset
 
 
 def run_step(name: str, fn):
@@ -100,8 +100,24 @@ def main() -> None:
         samples=args.samples,
         classes=args.classes,
         tokens_per_class=args.tokens_per_class,
+        seed=20260504,
     )
-    hensel = generate_clustered_hensel_dataset(benchmark_cfg)
+
+    train_hensel = generate_clustered_hensel_dataset(benchmark_cfg)
+
+    val_cfg = BenchmarkConfig(
+        p=args.p,
+        r=args.r,
+        samples=args.samples,
+        classes=args.classes,
+        tokens_per_class=args.tokens_per_class,
+        seed=derive_seed(20260504, "baseline_val_hensel"),
+        triplets=benchmark_cfg.triplets,
+        distance_pairs=benchmark_cfg.distance_pairs,
+    )
+
+    val_hensel = generate_clustered_hensel_dataset(val_cfg)
+
     if args.hierarchy_rule_dataset:
         rule_cfg = HierarchyRuleDatasetConfig(
             window_size=args.window_size,
@@ -109,18 +125,59 @@ def main() -> None:
             subtree_depth=args.rule_subtree_depth,
             stay_steps=args.rule_stay_steps,
             attack_tokens=args.rule_attack_tokens,
+            seed=20260504,
         )
-        train_ds = HierarchyRuleDataset(hensel, rule_cfg, n_samples=args.train_samples)
-        val_ds = HierarchyRuleDataset(hensel, rule_cfg, n_samples=args.val_samples)
+
+        val_rule_cfg = HierarchyRuleDatasetConfig(
+            window_size=args.window_size,
+            attack_fraction=args.attack_fraction,
+            subtree_depth=args.rule_subtree_depth,
+            stay_steps=args.rule_stay_steps,
+            attack_tokens=args.rule_attack_tokens,
+            seed=derive_seed(20260504, "baseline_val_rule"),
+        )
+
+        train_ds = HierarchyRuleDataset(
+            train_hensel,
+            rule_cfg,
+            n_samples=args.train_samples,
+        )
+
+        val_ds = HierarchyRuleDataset(
+            val_hensel,
+            val_rule_cfg,
+            n_samples=args.val_samples,
+        )
+
         pos_weight = float((1.0 - train_ds.labels.mean().item()) / max(1e-6, train_ds.labels.mean().item()))
+
     else:
         realistic_cfg = RealisticDatasetConfig(
             window_size=args.window_size,
             attack_fraction=args.attack_fraction,
             idle_fraction=args.idle_fraction,
+            seed=20260504,
         )
-        train_ds = RealisticBusDataset(hensel, realistic_cfg, n_samples=args.train_samples)
-        val_ds = RealisticBusDataset(hensel, realistic_cfg, n_samples=args.val_samples)
+
+        val_realistic_cfg = RealisticDatasetConfig(
+            window_size=args.window_size,
+            attack_fraction=args.attack_fraction,
+            idle_fraction=args.idle_fraction,
+            seed=derive_seed(20260504, "baseline_val_realistic"),
+        )
+
+        train_ds = RealisticBusDataset(
+            train_hensel,
+            realistic_cfg,
+            n_samples=args.train_samples,
+        )
+
+        val_ds = RealisticBusDataset(
+            val_hensel,
+            val_realistic_cfg,
+            n_samples=args.val_samples,
+        )
+
         pos_weight = train_ds.pos_weight
 
     majority = run_step("majority", lambda: run_majority_baseline(train_ds.labels, val_ds.labels))
@@ -280,6 +337,14 @@ def main() -> None:
 
     report = {
         "dataset": "hierarchy_rules" if args.hierarchy_rule_dataset else "realistic",
+        "data_split": {
+            "train_seed": 20260504,
+            "val_hensel_seed": derive_seed(20260504, "baseline_val_hensel"),
+            "train_samples": args.train_samples,
+            "val_samples": args.val_samples,
+            "train_positive_rate": float(train_ds.labels.mean().item()),
+            "val_positive_rate": float(val_ds.labels.mean().item()),
+        },
         "majority": majority,
         "isolation_forest": iso,
         "logistic_regression": logreg,

@@ -127,6 +127,41 @@ def _accumulation_scale(step: int, total_steps: int, grad_accum: int) -> int:
     return grad_accum
 
 
+def _collect_padic_gate_stats(model: nn.Module) -> dict[str, object]:
+    gates = []
+
+    for name, param in model.named_parameters():
+        if name.endswith("padic_gate"):
+            gates.append(
+                {
+                    "name": name,
+                    "raw": float(param.detach().cpu().item()),
+                    "sigmoid": float(param.detach().cpu().sigmoid().item()),
+                }
+            )
+
+    if not gates:
+        return {
+            "has_padic_gates": False,
+            "gate_count": 0,
+            "gate_mean": None,
+            "gate_min": None,
+            "gate_max": None,
+            "gates": [],
+        }
+
+    values = [g["sigmoid"] for g in gates]
+
+    return {
+        "has_padic_gates": True,
+        "gate_count": len(gates),
+        "gate_mean": sum(values) / len(values),
+        "gate_min": min(values),
+        "gate_max": max(values),
+        "gates": gates,
+    }
+
+
 @dataclass
 class TrainConfig:
     p: int = 3
@@ -582,6 +617,8 @@ def train(
         model = model_factory(config)
     model = model.to(device)
     print(model.parameter_summary())
+    initial_gate_stats = _collect_padic_gate_stats(model)
+    print(f"Initial PDAIC gate stats: {initial_gate_stats}")
 
     if config.realistic_dataset:
         loss_fn = make_weighted_loss(
@@ -700,6 +737,7 @@ def train(
 
     total_time = time.perf_counter() - run_start
     best_record = next(r for r in history if r["epoch"] == best_epoch)
+    final_gate_stats = _collect_padic_gate_stats(model)
     result = {
         "best_epoch": best_epoch,
         "best_auroc": best_auroc,
@@ -708,6 +746,8 @@ def train(
         "best_recall": best_record["val"]["best_recall"],
         "best_fpr": best_record["val"]["best_fpr"],
         "total_seconds": total_time,
+        "initial_padic_gate_stats": initial_gate_stats,
+        "final_padic_gate_stats": final_gate_stats,
         "history": history,
     }
 

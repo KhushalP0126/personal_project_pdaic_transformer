@@ -310,10 +310,7 @@ make train
 - `make vanilla` runs the standard transformer GPU training path without PDAIC attention.
 - `make hierarchy` runs the hierarchy-rule attention training path.
 - `make realistic` runs the realistic idle-heavy attention training path.
-- `make train-attention-cpu` is an alias for `make smoke`.
-- `make train-attention-bce-gpu` is an alias for `make train`.
-- `make train-attention-hierarchy-gpu` is an alias for `make hierarchy`.
-- `make train-attention-realistic-gpu` is an alias for `make realistic`.
+- `make cpu-all-1epoch` runs one CPU epoch across vanilla, PDAIC synthetic, hierarchy-rule, realistic, and baseline paths with progress output.
 
 ### Analysis
 
@@ -326,7 +323,7 @@ make train
 - `make sweep` reports sparsity plus hierarchy-alignment metrics across `p` on an untrained model.
 - `make threshold` runs the GPU training path with threshold tuning output.
 - `make diagnose` runs the learning-vs-overfit diagnostic.
-- `make compare-primes`, `make sweep-p-bases`, `make run-baselines`, `make eval-trained-attention`, `make tune-threshold`, and `make over-underfit` are aliases for the corresponding targets above.
+- `make audit` audits synthetic datasets for imbalance, leakage, train/validation overlap, and obvious artifacts.
 
 ### Open Datasets
 
@@ -334,17 +331,11 @@ make train
 - `make beth` downloads and benchmarks BETH. It needs Kaggle credentials or local BETH CSV files under `data/beth`.
 - `make adfa-stats` prints local ADFA-LD stats without training or download. Run `make adfa` first, or place the extracted dataset under `data/adfa/ADFA-LD`.
 - `make cpu_adfa_comp` compares vanilla vs PDAIC attention on ADFA-LD for three CPU epochs and writes JSON/Markdown reports under `results/`.
-- `make open-adfa`, `make open-beth`, and `make open-adfa-stats` are aliases for the corresponding dataset targets.
 
 ### 2-Adic / Hardware
 
 - `make int8` verifies unsigned INT8 arithmetic against truncated 2-adic arithmetic.
 - `make hardware` is an alias for `make int8`.
-
-### Other Aliases
-
-- `make run` is an alias for `make cpu`.
-- `make benchmark` is an alias for `make cpu`.
 
 ## Validation
 

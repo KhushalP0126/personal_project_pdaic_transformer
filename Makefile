@@ -31,6 +31,8 @@ OPEN_DATASET_ADFA_ARGS ?= --dataset adfa --data-dir ./data/adfa --p 3 --r 8 --wi
 OPEN_DATASET_BETH_ARGS ?= --dataset beth --data-dir ./data/beth --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 5 --batch-size 256 --device $(ACCEL_DEVICE)
 OPEN_DATASET_STATS_ARGS ?= --dataset adfa --data-dir ./data/adfa --stats-only --no-download --p 3 --r 8 --window-size 32 --stride 4 --device cpu
 CPU_ADFA_COMP_ARGS ?= --data-dir ./data/adfa --device cpu --p 3 --r 8 --window-size 32 --stride 4 --d-model 128 --n-heads 4 --n-layers 2 --epochs 3 --batch-size 1024 --alpha 0.0 --output-json results/cpu_adfa_comp.json --output-md results/cpu_adfa_comp.md
+CPU_ONE_EPOCH_TRAIN_ARGS ?= --device cpu --p 3 --r 8 --d-model 32 --n-heads 4 --n-layers 1 --ffn-dim 64 --head-hidden 16 --dropout 0.1 --window-size 16 --attack-fraction 0.30 --attack-min-len 2 --attack-max-len 4 --n-train 256 --n-val 64 --samples 512 --classes 8 --tokens-per-class 32 --epochs 1 --batch-size 32 --lr 3e-4 --num-workers 0 --alpha 0.0 --save-every 999 --max-seq-len 32
+CPU_ONE_EPOCH_BASELINE_ARGS ?= --device cpu --hierarchy-rule-dataset --p 3 --r 8 --samples 512 --classes 8 --tokens-per-class 32 --window-size 16 --attack-fraction 0.30 --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --train-samples 256 --val-samples 64 --epochs 1 --batch-size 32 --lr 2e-4 --d-model 32 --n-heads 4 --n-layers 1 --d-digit 8 --output-json results/cpu_1epoch_baselines.json
 
 # ---------------------------------------------------------------------------
 # Analysis defaults
@@ -44,20 +46,17 @@ INT8_ARGS ?= --r 8
 
 .DEFAULT_GOAL := help
 
-.PHONY: all setup test cpu gpu benchmark run \
+.PHONY: all setup test cpu gpu \
         int8 hardware \
         smoke train vanilla hierarchy realistic primes pdaic-primes compare-analysis sweep baselines eval threshold diagnose ablate \
-        adfa beth adfa-stats cpu_adfa_comp \
-        train-attention-cpu train-attention-bce-gpu train-attention-hierarchy-gpu train-attention-realistic-gpu \
-        compare-primes sweep-p-bases run-baselines eval-trained-attention tune-threshold over-underfit \
-        open-adfa open-beth open-adfa-stats \
+        adfa beth adfa-stats cpu_adfa_comp audit cpu-all-1epoch \
         ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7 \
         clean help clean-results clean-caches clean-checkpoints
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-all: setup test run
+all: setup test cpu
 
 $(VENV_PYTHON):
 	$(PYTHON) -m venv $(VENV)
@@ -77,10 +76,6 @@ test: setup
 # ---------------------------------------------------------------------------
 # Benchmark
 # ---------------------------------------------------------------------------
-run: cpu
-
-benchmark: cpu
-
 cpu: setup
 	$(VENV_PYTHON) scripts/run_padic_benchmark.py $(CPU_ARGS)
 
@@ -135,17 +130,6 @@ threshold: setup
 diagnose: setup
 	$(VENV_PYTHON) scripts/over_underfit.py --device $(ACCEL_DEVICE) --log-json results/over_underfit.json --log-md results/over_underfit.md
 
-train-attention-cpu: smoke
-train-attention-bce-gpu: train
-train-attention-hierarchy-gpu: hierarchy
-train-attention-realistic-gpu: realistic
-compare-primes: primes
-sweep-p-bases: sweep
-run-baselines: baselines
-eval-trained-attention: eval
-tune-threshold: threshold
-over-underfit: diagnose
-
 ablate-no-contrastive: setup
 	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(TRAIN_GPU_ARGS) --alpha 0.0 --log-json results/ablate_no_contrastive.json --log-md results/ablate_no_contrastive.md
 
@@ -181,9 +165,21 @@ adfa-stats: setup
 cpu_adfa_comp: setup
 	$(VENV_PYTHON) scripts/compare_adfa_models.py $(CPU_ADFA_COMP_ARGS)
 
-open-adfa: adfa
-open-beth: beth
-open-adfa-stats: adfa-stats
+audit: setup
+	$(VENV_PYTHON) scripts/audit_datasets.py
+
+cpu-all-1epoch: setup
+	@printf "\n[####----------------] 1/5 vanilla synthetic\n"
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py $(CPU_ONE_EPOCH_TRAIN_ARGS) --checkpoint-dir results/checkpoints/cpu_1epoch_vanilla --log-json results/cpu_1epoch_vanilla.json --log-md results/cpu_1epoch_vanilla.md
+	@printf "\n[########------------] 2/5 PDAIC synthetic\n"
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py --attention --d-digit 8 $(CPU_ONE_EPOCH_TRAIN_ARGS) --checkpoint-dir results/checkpoints/cpu_1epoch_pdaic --log-json results/cpu_1epoch_pdaic.json --log-md results/cpu_1epoch_pdaic.md
+	@printf "\n[############--------] 3/5 PDAIC hierarchy-rule\n"
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py --attention --d-digit 8 $(CPU_ONE_EPOCH_TRAIN_ARGS) --hierarchy-rule-dataset --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --checkpoint-dir results/checkpoints/cpu_1epoch_hierarchy --log-json results/cpu_1epoch_hierarchy.json --log-md results/cpu_1epoch_hierarchy.md
+	@printf "\n[################----] 4/5 PDAIC realistic\n"
+	$(VENV_PYTHON) scripts/train_anomaly_detector.py --attention --d-digit 8 $(CPU_ONE_EPOCH_TRAIN_ARGS) --realistic-dataset --realistic-attack-fraction 0.05 --idle-fraction 0.70 --checkpoint-dir results/checkpoints/cpu_1epoch_realistic --log-json results/cpu_1epoch_realistic.json --log-md results/cpu_1epoch_realistic.md
+	@printf "\n[####################] 5/5 baseline suite\n"
+	$(VENV_PYTHON) scripts/run_baselines.py $(CPU_ONE_EPOCH_BASELINE_ARGS)
+	@printf "\n[####################] done CPU one-epoch sweep\n"
 
 # ---------------------------------------------------------------------------
 # Analysis
@@ -239,6 +235,8 @@ help:
 	@echo "  make beth            Download BETH with Kaggle CLI if needed and run the benchmark"
 	@echo "  make adfa-stats      Show local ADFA-LD stats only, no download or training"
 	@echo "  make cpu_adfa_comp   Compare vanilla vs PDAIC attention on ADFA-LD for 3 CPU epochs"
+	@echo "  make audit           Audit synthetic datasets for imbalance, leakage, and artifacts"
+	@echo "  make cpu-all-1epoch  Run one CPU epoch across vanilla, PDAIC, hierarchy, realistic, and baselines"
 	@echo "  make analysis        Run the analysis workflows"
 	@echo "  make int8            Verify unsigned INT8 against 2-adic arithmetic"
 	@echo "  make ablate          Run the full ablation suite"
