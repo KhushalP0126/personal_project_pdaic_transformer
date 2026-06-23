@@ -1,0 +1,133 @@
+{
+  "config": {
+    "attack_fraction": 0.3,
+    "attack_max_len": 4,
+    "attack_min_len": 1,
+    "batch_size": 256,
+    "d_digit": 8,
+    "d_model": 64,
+    "epochs": 1,
+    "n_heads": 4,
+    "n_layers": 2,
+    "num_prefixes": 32,
+    "p": 2,
+    "prefix_len": 24,
+    "r": 32,
+    "window_size": 16
+  },
+  "data_split": {
+    "train_attack_kind_counts": {
+      "prefix_jump": 220,
+      "route_leak": 180,
+      "spoofed_prefix": 214
+    },
+    "train_positive_rate": 0.2998046875,
+    "train_samples": 2048,
+    "train_seed": 20260504,
+    "train_val_prefix_overlap": 0.0,
+    "val_attack_kind_counts": {
+      "prefix_jump": 58,
+      "route_leak": 51,
+      "spoofed_prefix": 44
+    },
+    "val_positive_rate": 0.298828125,
+    "val_samples": 512,
+    "val_seed": 7650649262606298817
+  },
+  "dataset": "ip_synthetic",
+  "models": {
+    "isolation_forest": {
+      "accuracy": 0.298828125,
+      "auroc": 0.5452327634860815,
+      "f1": 0.46015037593984964,
+      "precision": 0.298828125,
+      "recall": 1.0,
+      "train_time_s": 0.1426811659998748
+    },
+    "logistic_regression": {
+      "auroc": 0.550348644564604,
+      "f1": 0.41396508728179554,
+      "train_time_s": 0.016617459000372037
+    },
+    "padic_attention_random": {
+      "accuracy": 0.44140625,
+      "attention_sparsity": 0.0,
+      "attn_gap_depth1": 0.03288745880126953,
+      "attn_gap_depth2": 0.04339282214641571,
+      "attn_gap_depth4": 0.049169935286045074,
+      "auroc": 0.5397527627578422,
+      "diff_cluster_attention": 0.04072674736380577,
+      "diff_prefix_attention": 0.04072674736380577,
+      "f1": 0.44140625,
+      "hierarchy_gap": 0.03288745880126953,
+      "hierarchy_variant": "random",
+      "padic_attention_corr": 0.21051590144634247,
+      "padic_gate": 0.5000983476638794,
+      "precision": 0.3147632311977716,
+      "recall": 0.738562091503268,
+      "same_cluster_attention": 0.0736142098903656,
+      "same_prefix_attention": 0.0736142098903656,
+      "train_time_s": 23.262369749999834,
+      "twin_prime_stress_diff_cluster_attention": 0.04072674736380577,
+      "twin_prime_stress_hierarchy_gap": 0.0004566553980112076,
+      "twin_prime_stress_padic_attention_corr": 0.004794582724571228,
+      "twin_prime_stress_same_cluster_attention": 0.0736142098903656
+    },
+    "padic_attention_shuffled": {
+      "accuracy": 0.701171875,
+      "attention_sparsity": 0.0,
+      "attn_gap_depth1": 0.03324509039521217,
+      "attn_gap_depth2": 0.041478440165519714,
+      "attn_gap_depth4": 0.051262423396110535,
+      "auroc": 0.506217343018916,
+      "diff_cluster_attention": 0.040546972304582596,
+      "diff_prefix_attention": 0.040546972304582596,
+      "f1": 0.0,
+      "hierarchy_gap": 0.03324509039521217,
+      "hierarchy_variant": "shuffled",
+      "padic_attention_corr": 0.2040850818157196,
+      "padic_gate": 0.49983203411102295,
+      "precision": 0.0,
+      "recall": 0.0,
+      "same_cluster_attention": 0.07379206269979477,
+      "same_prefix_attention": 0.07379206269979477,
+      "train_time_s": 22.7465872089997,
+      "twin_prime_stress_diff_cluster_attention": 0.040546972304582596,
+      "twin_prime_stress_hierarchy_gap": 0.00010236445814371109,
+      "twin_prime_stress_padic_attention_corr": 0.0041427332907915115,
+      "twin_prime_stress_same_cluster_attention": 0.07379206269979477
+    },
+    "padic_attention_true": {
+      "accuracy": 0.396484375,
+      "attention_sparsity": 0.0,
+      "attn_gap_depth1": 0.018844906240701675,
+      "attn_gap_depth2": 0.018640834838151932,
+      "attn_gap_depth4": 0.017241932451725006,
+      "auroc": 0.5722686474775611,
+      "diff_cluster_attention": 0.04390959441661835,
+      "diff_prefix_attention": 0.04390959441661835,
+      "f1": 0.42883548983364134,
+      "hierarchy_gap": 0.018844906240701675,
+      "hierarchy_variant": "true",
+      "padic_attention_corr": 0.07168792188167572,
+      "padic_gate": 0.49960774183273315,
+      "precision": 0.29896907216494845,
+      "recall": 0.7581699346405228,
+      "same_cluster_attention": 0.06275449693202972,
+      "same_prefix_attention": 0.06275449693202972,
+      "train_time_s": 21.993558750000375,
+      "twin_prime_stress_diff_cluster_attention": 0.04390959441661835,
+      "twin_prime_stress_hierarchy_gap": -0.0003489912487566471,
+      "twin_prime_stress_padic_attention_corr": -0.00466490862891078,
+      "twin_prime_stress_same_cluster_attention": 0.06275449693202972
+    },
+    "vanilla_transformer": {
+      "accuracy": 0.61328125,
+      "auroc": 0.48158464871556794,
+      "f1": 0.24427480916030533,
+      "precision": 0.29357798165137616,
+      "recall": 0.20915032679738563,
+      "train_time_s": 0.834488957999838
+    }
+  }
+}
