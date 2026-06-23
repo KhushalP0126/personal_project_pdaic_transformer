@@ -21,10 +21,29 @@ The repo is designed to test whether the hierarchy signal is real, whether it su
 
 ## Current Status
 
-The codebase is in a much better experimental state than the initial synthetic runs, but it is still not publication-ready.
+The current direction is an IP-prefix anomaly-detection paper:
+
+```text
+Paper: 2-adic Prefix-Aware Transformer for IP Traffic Anomaly Detection
+Goal: workshop/student/arXiv-style draft
+Compute: CPU only
+Primary dataset path: synthetic IPv4 prefix windows
+Primary command: make ip-cpu
+```
+
+The project is now using the older Hensel/syscall-style synthetic work as supporting infrastructure, not as the main paper target. The active claim is modest:
+
+```text
+2-adic attention is a useful inductive bias for IP-prefix anomaly detection.
+```
+
+The codebase is in a usable experimental state for the IP-prefix direction, but it is still not publication-ready.
 
 What is already in place:
 
+- IPv4-to-32-bit binary digit pipeline with MSB-first prefix semantics
+- synthetic IP-prefix anomaly dataset with prefix jumps, spoofed prefixes, and route-leak style anomalies
+- CPU IP experiment runner comparing vanilla, true 2-adic, shuffled 2-adic, random 2-adic, and simple baselines
 - hybrid attention with `content_logits + gated_padic_logits`
 - no-op retry logic for synthetic and realistic attack injection
 - exact rank-based AUROC
@@ -35,10 +54,12 @@ What is already in place:
 
 What remains open:
 
+- Day 4 tuning on the IP-prefix task
+- Day 5 multi-seed table for the best small CPU config
 - stronger evidence that p-adic structure is the cause of improvement
 - multiple seeds with mean and standard deviation
 - clean randomized-hierarchy ablations
-- stronger real-dataset evidence
+- eventual validation on BETH or a real IP/network-traffic dataset
 - a tighter paper narrative
 
 ## Current Evidence From Results
@@ -280,26 +301,26 @@ The repo still needs stronger answers to these questions:
 
 ## Potential Uses of PDAIC Numbers
 
-The current codebase is built for host intrusion detection, but the reusable idea is broader: encode a discrete hierarchy as adic digits, then let attention combine learned content rules with hierarchy-aware bias.
+The active direction is IP-prefix anomaly detection. The reusable idea is broader: encode a discrete hierarchy as adic digits, then let attention combine learned content rules with hierarchy-aware bias.
 
 | Application domain | Readiness | Codebase components reused | Required changes | Estimated pivot time |
 |---|---:|---|---|---|
-| IP routing and network analytics | 95% | Core transformer, p-adic attention, evaluation scripts, and classification head. | Add a converter from raw PCAP/network logs or IP strings into token sequences. | 2-4 hours |
+| IP routing and network analytics | 95% | Core transformer, p-adic attention, IP-prefix dataset, experiment runner, and classification head. | Add raw PCAP/network-log ingestion after the synthetic IP result is stable. | active target |
 | Lexical semantics and WordNet | 75% | Core transformer, p-adic attention, and classification head. | Replace the syscall tokenizer with a parser that maps words to WordNet tree/path IDs. | 1 day |
 | Genomics and phylogenetics | 45% | Token embedding layer, classification head, and training loop. | Modify attention to accept a supplied evolutionary-tree distance matrix instead of computing shared-prefix distances from sequence digits. | 3-5 days |
 | Document retrieval and Wasserstein-style matching | 15% | Token embedding layer and some raw attention math. | Replace the classification head, rewrite the objective, build a Siamese/twin-network setup, and add optimal-transport solvers. | 1-2 weeks |
 
-The nearest pivot is IP routing. IP addresses are already hierarchical discrete strings, so the model can use the same digit-window representation after preprocessing. Lexical semantics is the next most plausible pivot because WordNet already gives a tree structure; the main work is data preparation rather than model surgery.
+IP routing is no longer just a pivot; it is the current paper path. IP addresses are hierarchical discrete strings, so `p=2, r=32` gives a natural prefix representation. Lexical semantics is the next most plausible future pivot because WordNet already gives a tree structure; the main work would be data preparation rather than model surgery.
 
 ## Recommended Experiment Order
 
-1. Start with BCE-first hybrid attention.
-2. Run the hierarchy-rule benchmark.
-3. Run the baseline suite.
-4. Evaluate a trained checkpoint against true, shuffled, and random hierarchy.
-5. Move to the realistic dataset path.
-6. Validate on BETH or an IP/network-traffic dataset.
-7. Repeat the main runs across multiple seeds.
+1. Use `make ip-cpu` as the reproducibility command for the IP-prefix experiment.
+2. Day 4: tune only the small CPU grid: window size `16/32`, `d_model` `64/128`, layers `1/2`, dropout `0.1/0.2`, epochs `1/3`.
+3. Keep `p=2, r=32`; do not spend time on `p=3,5,7` for the IP paper.
+4. Compare true 2-adic attention against vanilla, shuffled 2-adic, random 2-adic, IsolationForest, and logistic regression.
+5. Day 5: run three seeds on the best small CPU config and report AUROC/F1 mean and standard deviation.
+6. Save attention diagnostics for every final run: `padic_attention_corr`, `hierarchy_gap`, `same_prefix_attention`, `diff_prefix_attention`, and `padic_gate`.
+7. After the synthetic IP table is stable, validate on BETH or a real IP/network-traffic dataset.
 
 ## Quick Start
 
