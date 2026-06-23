@@ -9,7 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .model import AnomalyHead, HenselEmbedding
-from .hensel import digits_to_int64
+
+TWIN_PRIME_STRESS_MIN_PAIRS = 4
 
 
 def _attention_sparsity(weights: torch.Tensor, threshold: float = 1e-4) -> torch.Tensor:
@@ -37,6 +38,19 @@ def _safe_masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 def _finite_or_zero(value: torch.Tensor) -> torch.Tensor:
     return torch.where(torch.isfinite(value), value, value.new_tensor(0.0))
+
+
+def _add_residue_delta(digits: torch.Tensor, p: int, delta: int) -> torch.Tensor:
+    """Add a small non-negative residue delta to least-significant-first digits."""
+    if delta < 0:
+        raise ValueError("delta must be non-negative")
+    out = digits.clone()
+    carry = torch.full(digits.shape[:-1], delta, dtype=torch.int64, device=digits.device)
+    for idx in range(digits.shape[-1]):
+        total = out[..., idx] + carry
+        out[..., idx] = total.remainder(p)
+        carry = torch.div(total, p, rounding_mode="floor")
+    return out
 
 
 def _prime_gaps(count: int) -> list[int]:
@@ -88,6 +102,60 @@ def _subset_attention_metrics(weights: torch.Tensor, hard_prefix: torch.Tensor, 
     }
 
 
+def _twin_prime_stress_metrics(
+    weights: torch.Tensor,
+    digits: torch.Tensor,
+    p: int,
+    pair_mask: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    plus_two = _add_residue_delta(digits.to(torch.int64), p=p, delta=2)
+    forward_pairs = (plus_two.unsqueeze(2) == digits.unsqueeze(1)).all(dim=-1)
+    twin_pairs = pair_mask & (forward_pairs | forward_pairs.transpose(1, 2))
+    non_twin_pairs = pair_mask & ~twin_pairs
+
+    twin_count = twin_pairs.sum()
+    non_twin_count = non_twin_pairs.sum()
+    valid_count = pair_mask.sum().clamp(min=1)
+    pair_fraction = twin_count.to(torch.float32) / valid_count.to(torch.float32)
+    usable = (twin_count >= TWIN_PRIME_STRESS_MIN_PAIRS) & (
+        non_twin_count >= TWIN_PRIME_STRESS_MIN_PAIRS
+    )
+
+    if not bool(usable.item()):
+        zero = weights.new_tensor(0.0)
+        return {
+            "twin_prime_stress_padic_attention_corr": zero,
+            "twin_prime_stress_hierarchy_gap": zero,
+            "twin_prime_stress_same_cluster_attention": zero,
+            "twin_prime_stress_diff_cluster_attention": zero,
+            "twin_prime_stress_pair_count": twin_count.to(dtype=weights.dtype),
+            "twin_prime_stress_pair_fraction": pair_fraction.to(dtype=weights.dtype),
+            "twin_prime_stress_usable": zero,
+        }
+
+    twin_attention = weights.masked_select(twin_pairs).mean()
+    non_twin_attention = weights.masked_select(non_twin_pairs).mean()
+    flat_weights = weights.masked_select(pair_mask)
+    flat_target = twin_pairs.masked_select(pair_mask).to(dtype=flat_weights.dtype)
+    centered_weights = flat_weights - flat_weights.mean()
+    centered_target = flat_target - flat_target.mean()
+    denom = centered_weights.norm() * centered_target.norm()
+    if float(denom.item()) == 0.0:
+        corr = weights.new_tensor(0.0)
+    else:
+        corr = (centered_weights @ centered_target) / denom
+
+    return {
+        "twin_prime_stress_padic_attention_corr": corr,
+        "twin_prime_stress_hierarchy_gap": twin_attention - non_twin_attention,
+        "twin_prime_stress_same_cluster_attention": twin_attention,
+        "twin_prime_stress_diff_cluster_attention": non_twin_attention,
+        "twin_prime_stress_pair_count": twin_count.to(dtype=weights.dtype),
+        "twin_prime_stress_pair_fraction": pair_fraction.to(dtype=weights.dtype),
+        "twin_prime_stress_usable": weights.new_tensor(1.0),
+    }
+
+
 def _attention_hierarchy_metrics(
     weights: torch.Tensor,
     digits: torch.Tensor,
@@ -112,43 +180,7 @@ def _attention_hierarchy_metrics(
         same_depth_attention = _safe_masked_mean(weights, same_depth)
         diff_depth_attention = _safe_masked_mean(weights, diff_depth)
         metrics[f"attn_gap_depth{depth}"] = same_depth_attention - diff_depth_attention
-    try:
-        flat_weights = weights.masked_select(pair_mask).float()
-        flat_ids = digits_to_int64(digits.view(-1, digits.shape[-1]), p=p)
-        flat_ids_mat = flat_ids.view(digits.shape[0], digits.shape[1])
-        id_diff = (flat_ids_mat.unsqueeze(2) - flat_ids_mat.unsqueeze(1)).abs().float()
-        flat_id_diff = id_diff.masked_select(pair_mask)
-        if flat_weights.numel() < 2 or flat_id_diff.std() < 1e-6:
-            tp_corr = weights.new_tensor(0.0)
-            tp_gap = weights.new_tensor(0.0)
-        else:
-            cw = flat_weights - flat_weights.mean()
-            cd = flat_id_diff - flat_id_diff.mean()
-            denom = cw.norm() * cd.norm()
-            tp_corr = -(cw @ cd) / denom if float(denom.item()) > 0 else weights.new_tensor(0.0)
-            median_diff = flat_id_diff.median()
-            close_mask_flat = flat_id_diff <= median_diff
-            far_mask_flat = ~close_mask_flat
-            close_attn = flat_weights[close_mask_flat].mean() if close_mask_flat.any() else weights.new_tensor(0.0)
-            far_attn = flat_weights[far_mask_flat].mean() if far_mask_flat.any() else weights.new_tensor(0.0)
-            tp_gap = close_attn - far_attn
-        metrics["twin_prime_stress_padic_attention_corr"] = _finite_or_zero(tp_corr)
-        metrics["twin_prime_stress_hierarchy_gap"] = _finite_or_zero(tp_gap)
-        metrics["twin_prime_stress_same_cluster_attention"] = _finite_or_zero(
-            weights.masked_select(pair_mask & (hard_prefix > 0)).mean()
-            if (pair_mask & (hard_prefix > 0)).any()
-            else weights.new_tensor(0.0)
-        )
-        metrics["twin_prime_stress_diff_cluster_attention"] = _finite_or_zero(
-            weights.masked_select(pair_mask & (hard_prefix == 0)).mean()
-            if (pair_mask & (hard_prefix == 0)).any()
-            else weights.new_tensor(0.0)
-        )
-    except OverflowError:
-        metrics["twin_prime_stress_padic_attention_corr"] = weights.new_tensor(0.0)
-        metrics["twin_prime_stress_hierarchy_gap"] = weights.new_tensor(0.0)
-        metrics["twin_prime_stress_same_cluster_attention"] = weights.new_tensor(0.0)
-        metrics["twin_prime_stress_diff_cluster_attention"] = weights.new_tensor(0.0)
+    metrics.update(_twin_prime_stress_metrics(weights, digits, p, pair_mask))
     metrics = {key: _finite_or_zero(value) for key, value in metrics.items()}
     metrics["attention_sparsity"] = _finite_or_zero(_attention_sparsity(weights.masked_select(valid_pairs)))
     return metrics
@@ -166,7 +198,7 @@ class SoftPadicValuation(nn.Module):
         learn_temp: bool = True,
         eps: float = 1e-6,
         diversity_weight: float = 0.01,
-        temperature_decay: float = 0.05,
+        temperature_decay: float = 0.0,
         hard_match: bool = False,
     ) -> None:
         super().__init__()
@@ -303,9 +335,16 @@ class PadicAttentionHead(nn.Module):
         d_digit: int = 16,
         dropout: float = 0.1,
         hard_match: bool = False,
+        temperature_decay: float = 0.0,
     ) -> None:
         super().__init__()
-        self.valuation = SoftPadicValuation(p=p, r=r, d_digit=d_digit, hard_match=hard_match)
+        self.valuation = SoftPadicValuation(
+            p=p,
+            r=r,
+            d_digit=d_digit,
+            hard_match=hard_match,
+            temperature_decay=temperature_decay,
+        )
         self.logit_scale = nn.Parameter(torch.tensor(8.0))
         self.query_proj = nn.Linear(d_model, d_head)
         self.key_proj = nn.Linear(d_model, d_head)
@@ -381,13 +420,23 @@ class PadicMultiHeadAttention(nn.Module):
         d_digit: int = 16,
         dropout: float = 0.1,
         hard_match: bool = False,
+        temperature_decay: float = 0.0,
     ) -> None:
         super().__init__()
         if d_model % n_heads != 0:
             raise ValueError("d_model must be divisible by n_heads")
         self.heads = nn.ModuleList(
             [
-                PadicAttentionHead(p=p, r=r, d_model=d_model, d_head=d_model // n_heads, d_digit=d_digit, dropout=dropout, hard_match=hard_match)
+                PadicAttentionHead(
+                    p=p,
+                    r=r,
+                    d_model=d_model,
+                    d_head=d_model // n_heads,
+                    d_digit=d_digit,
+                    dropout=dropout,
+                    hard_match=hard_match,
+                    temperature_decay=temperature_decay,
+                )
                 for _ in range(n_heads)
             ]
         )
@@ -412,6 +461,9 @@ class PadicMultiHeadAttention(nn.Module):
             "twin_prime_stress_same_cluster_attention": [],
             "twin_prime_stress_diff_cluster_attention": [],
             "twin_prime_stress_hierarchy_gap": [],
+            "twin_prime_stress_pair_count": [],
+            "twin_prime_stress_pair_fraction": [],
+            "twin_prime_stress_usable": [],
             "attn_gap_depth1": [],
             "attn_gap_depth2": [],
             "attn_gap_depth4": [],
@@ -454,9 +506,19 @@ class PadicTransformerLayer(nn.Module):
         d_digit: int = 16,
         dropout: float = 0.1,
         hard_match: bool = False,
+        temperature_decay: float = 0.0,
     ) -> None:
         super().__init__()
-        self.self_attn = PadicMultiHeadAttention(p=p, r=r, d_model=d_model, n_heads=n_heads, d_digit=d_digit, dropout=dropout, hard_match=hard_match)
+        self.self_attn = PadicMultiHeadAttention(
+            p=p,
+            r=r,
+            d_model=d_model,
+            n_heads=n_heads,
+            d_digit=d_digit,
+            dropout=dropout,
+            hard_match=hard_match,
+            temperature_decay=temperature_decay,
+        )
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = nn.Sequential(
@@ -514,6 +576,7 @@ class PadicAttentionEncoder(nn.Module):
         d_digit: int = 16,
         dropout: float = 0.1,
         hard_match: bool = False,
+        temperature_decay: float = 0.0,
     ) -> None:
         super().__init__()
         self.layers = nn.ModuleList(
@@ -527,6 +590,7 @@ class PadicAttentionEncoder(nn.Module):
                     d_digit=d_digit,
                     dropout=dropout,
                     hard_match=hard_match,
+                    temperature_decay=temperature_decay,
                 )
                 for _ in range(n_layers)
             ]
@@ -550,6 +614,9 @@ class PadicAttentionEncoder(nn.Module):
             "twin_prime_stress_same_cluster_attention": [],
             "twin_prime_stress_diff_cluster_attention": [],
             "twin_prime_stress_hierarchy_gap": [],
+            "twin_prime_stress_pair_count": [],
+            "twin_prime_stress_pair_fraction": [],
+            "twin_prime_stress_usable": [],
             "attn_gap_depth1": [],
             "attn_gap_depth2": [],
             "attn_gap_depth4": [],
@@ -591,7 +658,8 @@ class PadicAttentionAnomalyDetector(nn.Module):
         dropout: float = 0.1,
         max_seq_len: int = 256,
         hard_match: bool = False,
-        ) -> None:
+        temperature_decay: float = 0.0,
+    ) -> None:
         super().__init__()
         self.p = p
         self.r = r
@@ -607,6 +675,7 @@ class PadicAttentionAnomalyDetector(nn.Module):
             d_digit=d_digit,
             dropout=dropout,
             hard_match=hard_match,
+            temperature_decay=temperature_decay,
         )
         self.head = AnomalyHead(d_model=d_model, hidden_dim=head_hidden, dropout=dropout)
 

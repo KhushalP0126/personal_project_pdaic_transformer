@@ -173,6 +173,7 @@ class TrainConfig:
     head_hidden: int = 128
     d_digit: int = 16
     hard_match: bool = False
+    temperature_decay: float = 0.0
     dropout: float = 0.1
 
     window_size: int = 32

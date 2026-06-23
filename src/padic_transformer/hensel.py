@@ -59,16 +59,32 @@ def int64_to_digits(
 
 
 def digits_to_int64(digits: torch.Tensor, p: int) -> torch.Tensor:
-    """Pack fixed-width Hensel digits into int64 residues when the width fits."""
+    """Pack fixed-width Hensel digits into int64 residues when each row fits.
+
+    The full ``p**r`` residue space may exceed signed int64 even when a given
+    batch contains only small residues. Validate row-by-row so low-valued rows
+    still pack cleanly, and fail before PyTorch can overflow during arithmetic.
+    """
     arr = _require_digit_tensor(digits, p)
     r = arr.shape[-1]
-    if pow(p, r) - 1 > int(INT64_MAX):
-        raise OverflowError(f"p**r does not fit int64 for p={p}, r={r}")
-
+    limit = int(INT64_MAX)
     out = torch.zeros(arr.shape[:-1], dtype=torch.int64, device=arr.device)
     place = 1
     for idx in range(r):
-        out += arr[..., idx] * place
+        digit = arr[..., idx]
+        if place > limit:
+            overflow = digit != 0
+        else:
+            max_digit = torch.div(limit - out, place, rounding_mode="floor")
+            overflow = digit > max_digit
+        if bool(torch.any(overflow).item()):
+            bad_row = int(torch.nonzero(overflow.reshape(-1), as_tuple=False)[0].item())
+            raise ValueError(
+                "digits encode a residue that does not fit int64; "
+                f"p={p}, r={r}, first_bad_row={bad_row}"
+            )
+        if place <= limit:
+            out += digit * place
         place *= p
     return out
 

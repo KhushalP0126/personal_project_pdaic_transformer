@@ -68,6 +68,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attention", action="store_true", help="Use the soft p-adic attention model")
     parser.add_argument("--hard-match", action="store_true", help="Use exact digit equality instead of learned embeddings for p-adic valuation")
     parser.add_argument("--d-digit", type=int, default=16, help="Per-digit embedding width for soft attention")
+    parser.add_argument(
+        "--temperature-decay",
+        type=float,
+        default=0.0,
+        help="Optional prime-gap temperature decay for soft p-adic valuation; 0.0 is flat",
+    )
     parser.add_argument("--checkpoint-dir", default="results/checkpoints")
     parser.add_argument("--log-json", default="results/training_log.json")
     parser.add_argument("--log-md", default="results/training_log.md")
@@ -104,6 +110,7 @@ def main() -> None:
         head_hidden=args.head_hidden,
         d_digit=args.d_digit,
         hard_match=args.hard_match,
+        temperature_decay=args.temperature_decay,
         dropout=args.dropout,
         window_size=args.window_size,
         attack_fraction=args.attack_fraction,
@@ -158,6 +165,7 @@ def main() -> None:
                 dropout=cfg.dropout,
                 max_seq_len=cfg.max_seq_len,
                 hard_match=cfg.hard_match,
+                temperature_decay=cfg.temperature_decay,
             )
 
         train(config, device, model_factory=factory)

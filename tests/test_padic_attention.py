@@ -18,6 +18,7 @@ from padic_transformer.padic_attention import (
     PadicMultiHeadAttention,
     PadicTransformerLayer,
     SoftPadicValuation,
+    _attention_hierarchy_metrics,
 )
 
 
@@ -34,6 +35,11 @@ class TestSoftPadicValuation(unittest.TestCase):
         temps = valuation.log_temperature.exp()
         expected = torch.tensor([1.1, 1.2, 1.2, 1.4, 1.2], dtype=temps.dtype)
         torch.testing.assert_close(temps, expected, atol=1e-6, rtol=0.0)
+
+    def test_temperature_initialization_is_flat_by_default(self) -> None:
+        valuation = SoftPadicValuation(p=3, r=5, d_digit=8, temperature=1.0)
+        temps = valuation.log_temperature.exp()
+        torch.testing.assert_close(temps, torch.ones_like(temps), atol=1e-6, rtol=0.0)
 
     def test_r1_temperature_stats_and_loss_are_finite(self) -> None:
         valuation = SoftPadicValuation(p=3, r=1, d_digit=8)
@@ -57,6 +63,30 @@ class TestSoftPadicValuation(unittest.TestCase):
         self.assertTrue(torch.isfinite(weights).all().item())
         for value in metrics.values():
             self.assertTrue(torch.isfinite(value).item())
+
+    def test_twin_prime_stress_reports_unusable_for_degenerate_pairs(self) -> None:
+        digits = torch.tensor([[[0, 0], [1, 1], [2, 2]]], dtype=torch.int64)
+        weights = torch.full((1, 3, 3), 1.0 / 3.0)
+        metrics = _attention_hierarchy_metrics(weights, digits, p=3)
+
+        self.assertEqual(float(metrics["twin_prime_stress_usable"].item()), 0.0)
+        self.assertEqual(float(metrics["twin_prime_stress_pair_count"].item()), 0.0)
+        self.assertEqual(float(metrics["twin_prime_stress_hierarchy_gap"].item()), 0.0)
+        self.assertEqual(float(metrics["twin_prime_stress_padic_attention_corr"].item()), 0.0)
+
+    def test_twin_prime_stress_uses_observed_plus_two_pairs(self) -> None:
+        digits = torch.tensor([[[0, 0], [2, 0], [1, 0], [0, 1]]], dtype=torch.int64)
+        weights = torch.full((1, 4, 4), 0.1)
+        weights[:, torch.arange(4), torch.arange(4)] = 0.0
+        for left, right in ((0, 1), (1, 0), (2, 3), (3, 2)):
+            weights[0, left, right] = 0.9
+
+        metrics = _attention_hierarchy_metrics(weights, digits, p=3)
+
+        self.assertEqual(float(metrics["twin_prime_stress_usable"].item()), 1.0)
+        self.assertEqual(float(metrics["twin_prime_stress_pair_count"].item()), 4.0)
+        self.assertGreater(float(metrics["twin_prime_stress_hierarchy_gap"].item()), 0.0)
+        self.assertGreater(float(metrics["twin_prime_stress_padic_attention_corr"].item()), 0.0)
 
 
 class TestPadicAttentionHead(unittest.TestCase):
@@ -92,6 +122,9 @@ class TestPadicAttentionHead(unittest.TestCase):
             "twin_prime_stress_same_cluster_attention",
             "twin_prime_stress_diff_cluster_attention",
             "twin_prime_stress_hierarchy_gap",
+            "twin_prime_stress_pair_count",
+            "twin_prime_stress_pair_fraction",
+            "twin_prime_stress_usable",
             "attn_gap_depth1",
             "attn_gap_depth2",
             "attn_gap_depth4",
@@ -222,6 +255,9 @@ class TestPadicAttentionAnomalyDetector(unittest.TestCase):
             "twin_prime_stress_same_cluster_attention",
             "twin_prime_stress_diff_cluster_attention",
             "twin_prime_stress_hierarchy_gap",
+            "twin_prime_stress_pair_count",
+            "twin_prime_stress_pair_fraction",
+            "twin_prime_stress_usable",
             "attn_gap_depth1",
             "attn_gap_depth2",
             "attn_gap_depth4",

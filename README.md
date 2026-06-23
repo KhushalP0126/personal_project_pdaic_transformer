@@ -39,6 +39,178 @@ The project is now using the older Hensel/syscall-style synthetic work as suppor
 
 The codebase is in a usable experimental state for the IP-prefix direction, but it is still not publication-ready.
 
+## Reproducibility
+
+### Environment setup
+
+Use Python 3.10 or newer. The project is installable as an editable package, and
+`requirements.txt` pins the runtime versions used for the checked-in result
+files.
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -e .
+```
+
+The Makefile runs the same setup through:
+
+```bash
+make setup
+```
+
+### Sanity checks
+
+Run the unit tests before comparing results:
+
+```bash
+make test
+```
+
+The fast CPU smoke path is:
+
+```bash
+make smoke
+```
+
+### Reproduce the IP-prefix results
+
+Day 3 first useful IP-prefix run:
+
+```bash
+.venv/bin/python scripts/run_ip_experiment.py \
+  --device cpu \
+  --train-samples 2048 \
+  --val-samples 512 \
+  --window-size 16 \
+  --prefix-len 24 \
+  --num-prefixes 32 \
+  --attack-fraction 0.30 \
+  --attack-min-len 1 \
+  --attack-max-len 4 \
+  --epochs 1 \
+  --batch-size 128 \
+  --lr 3e-4 \
+  --d-model 64 \
+  --n-heads 4 \
+  --n-layers 1 \
+  --d-digit 8 \
+  --output-json results/ip_day3_first.json \
+  --output-md results/ip_day3_first.md
+```
+
+Day 4 small CPU tuning sweep:
+
+```bash
+make ip-day4
+```
+
+The aggregate Day 4 report is written to:
+
+```text
+results/ip_day4_tuning.json
+results/ip_day4_tuning.md
+```
+
+### Train and evaluate the Hensel hierarchy model
+
+CPU sanity training:
+
+```bash
+make smoke
+```
+
+Recommended accelerator-backed training path:
+
+```bash
+make train
+```
+
+Evaluate a trained checkpoint against hierarchy controls:
+
+```bash
+make eval
+```
+
+### Temperature initialization ablation
+
+Soft p-adic valuation now uses flat temperature initialization by default. The
+older prime-gap prior is opt-in so it must be ablated explicitly:
+
+```bash
+# Flat default
+.venv/bin/python scripts/train_anomaly_detector.py \
+  --attention \
+  --device cpu \
+  --p 3 \
+  --r 8 \
+  --d-model 64 \
+  --n-heads 4 \
+  --n-layers 2 \
+  --ffn-dim 256 \
+  --head-hidden 32 \
+  --dropout 0.1 \
+  --d-digit 8 \
+  --window-size 16 \
+  --attack-fraction 0.3 \
+  --attack-min-len 2 \
+  --attack-max-len 4 \
+  --n-train 4096 \
+  --n-val 512 \
+  --samples 4096 \
+  --classes 16 \
+  --tokens-per-class 64 \
+  --epochs 15 \
+  --batch-size 64 \
+  --lr 3e-4 \
+  --warmup-epochs 2 \
+  --num-workers 0 \
+  --alpha 0.0 \
+  --temperature-decay 0.0 \
+  --save-every 999 \
+  --checkpoint-dir results/temp_flat_checkpoints \
+  --log-json results/temp_flat.json \
+  --log-md results/temp_flat.md
+
+# Prime-gap prior
+.venv/bin/python scripts/train_anomaly_detector.py \
+  --attention \
+  --device cpu \
+  --p 3 \
+  --r 8 \
+  --d-model 64 \
+  --n-heads 4 \
+  --n-layers 2 \
+  --ffn-dim 256 \
+  --head-hidden 32 \
+  --dropout 0.1 \
+  --d-digit 8 \
+  --window-size 16 \
+  --attack-fraction 0.3 \
+  --attack-min-len 2 \
+  --attack-max-len 4 \
+  --n-train 4096 \
+  --n-val 512 \
+  --samples 4096 \
+  --classes 16 \
+  --tokens-per-class 64 \
+  --epochs 15 \
+  --batch-size 64 \
+  --lr 3e-4 \
+  --warmup-epochs 2 \
+  --num-workers 0 \
+  --alpha 0.0 \
+  --temperature-decay 0.05 \
+  --save-every 999 \
+  --checkpoint-dir results/temp_prime_gap_checkpoints \
+  --log-json results/temp_prime_gap.json \
+  --log-md results/temp_prime_gap.md
+```
+
+Do not cite the prime-gap prior as evidence unless it beats the flat run under
+the same seed and training budget.
+
 What is already in place:
 
 - IPv4-to-32-bit binary digit pipeline with MSB-first prefix semantics

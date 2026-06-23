@@ -44,6 +44,18 @@ class PadicCoreTests(unittest.TestCase):
         restored = digits_to_int64(digits, p=3)
         torch.testing.assert_close(restored, values, rtol=0, atol=0)
 
+    def test_digits_to_int64_accepts_edge_width_when_rows_fit(self) -> None:
+        digits = torch.ones((1, 64), dtype=torch.int64)
+        digits[:, -1] = 0
+        restored = digits_to_int64(digits, p=2)
+        torch.testing.assert_close(restored, torch.tensor([torch.iinfo(torch.int64).max]))
+
+    def test_digits_to_int64_rejects_actual_overflow_row(self) -> None:
+        digits = torch.zeros((1, 64), dtype=torch.int64)
+        digits[:, -1] = 1
+        with self.assertRaises(ValueError):
+            digits_to_int64(digits, p=2)
+
     def test_int64_to_digits_validate_rejects_truncation(self) -> None:
         with self.assertRaises(ValueError):
             int64_to_digits(torch.tensor([9], dtype=torch.int64), p=3, r=2, validate=True)
