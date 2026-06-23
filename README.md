@@ -45,6 +45,31 @@ What remains open:
 
 The current results do **not** confirm the central hypothesis yet. They show useful signal, but the evidence is still weak and mixed.
 
+### IP-prefix Day 3 result
+
+`results/ip_day3_first.json` is the first useful result for the IP-prefix paper direction. The experiment uses `p=2`, `r=32`, `/24` prefixes, 2048 train windows, 512 validation windows, one seed, and one CPU epoch.
+
+| Model | AUROC | F1 |
+|---|---:|---:|
+| logistic_regression | 0.5503 | 0.4140 |
+| isolation_forest | 0.5452 | 0.4602 |
+| vanilla_transformer | 0.4680 | 0.2716 |
+| padic_attention_true | 0.5750 | 0.4715 |
+| padic_attention_shuffled | 0.4656 | 0.2283 |
+| padic_attention_random | 0.4657 | 0.4602 |
+
+This is a green light to continue the IP-prefix experiment. The important ordering is:
+
+```text
+true 2-adic > vanilla
+true 2-adic > shuffled
+true 2-adic > random
+```
+
+That suggests the real IP-prefix hierarchy is contributing useful signal. When the hierarchy is destroyed by shuffled or random remaps, AUROC falls back near the vanilla transformer.
+
+The result is not final evidence. The margin over logistic regression and IsolationForest is small, and the run is only one seed and one epoch. The PDAIC gate also stayed near initialization (`padic_gate ~= 0.5`), so Day 4 should test whether more epochs or slightly larger models make the p-adic branch move.
+
 ### Central finding
 
 `results/trained_attention_eval.json` is the most important hierarchy-control result so far:

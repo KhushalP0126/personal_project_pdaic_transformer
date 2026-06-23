@@ -124,17 +124,30 @@ def apply_ip_hierarchy_variant(windows: torch.Tensor, variant: str, seed: int) -
         return windows.clone()
     rng = torch.Generator(device=windows.device)
     rng.manual_seed(seed)
+    ids = _pack_msb_binary(windows)
+    flat_ids = ids.reshape(-1)
+    unique_ids = torch.unique(flat_ids, sorted=True)
+    remap_indices = torch.searchsorted(unique_ids, flat_ids)
 
     if variant == "shuffled":
-        perm = torch.randperm(windows.shape[-1], generator=rng, device=windows.device)
-        return windows[..., perm].clone()
+        remapped_vocab = unique_ids[
+            torch.randperm(unique_ids.numel(), generator=rng, device=windows.device)
+        ]
+        remapped_ids = remapped_vocab[remap_indices].reshape_as(ids)
+        return _unpack_msb_binary(remapped_ids)
 
     if variant == "random":
-        ids = _pack_msb_binary(windows)
-        seed32 = int(seed) & 0xFFFFFFFF
-        hashed = torch.bitwise_xor(ids, torch.full_like(ids, seed32))
-        hashed = torch.remainder(hashed * 1664525 + 1013904223, 1 << R)
-        return _unpack_msb_binary(hashed)
+        random_digits = torch.randint(
+            0,
+            P,
+            (unique_ids.numel(), R),
+            dtype=torch.int64,
+            device=windows.device,
+            generator=rng,
+        )
+        remapped_vocab = _pack_msb_binary(random_digits)
+        remapped_ids = remapped_vocab[remap_indices].reshape_as(ids)
+        return _unpack_msb_binary(remapped_ids)
 
     raise ValueError(f"unknown IP hierarchy variant: {variant}")
 
@@ -430,8 +443,8 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             "## Notes",
             "",
             "- `padic_attention_true` keeps MSB-first IP prefix bits.",
-            "- `padic_attention_shuffled` uses a fixed bit-position permutation.",
-            "- `padic_attention_random` hashes each address into random-looking 32-bit digits.",
+            "- `padic_attention_shuffled` randomly permutes the unique IP-token vocabulary.",
+            "- `padic_attention_random` remaps each unique IP token to random 32-bit digits.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
