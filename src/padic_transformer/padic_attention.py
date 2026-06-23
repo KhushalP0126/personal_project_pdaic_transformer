@@ -336,8 +336,13 @@ class PadicAttentionHead(nn.Module):
         dropout: float = 0.1,
         hard_match: bool = False,
         temperature_decay: float = 0.0,
+        gate_init_logit: float = 0.0,
+        gate_regularization_weight: float = 0.001,
+        fixed_padic_gate: float | None = None,
     ) -> None:
         super().__init__()
+        if fixed_padic_gate is not None and not 0.0 <= fixed_padic_gate <= 1.0:
+            raise ValueError("fixed_padic_gate must be in [0, 1]")
         self.valuation = SoftPadicValuation(
             p=p,
             r=r,
@@ -348,12 +353,23 @@ class PadicAttentionHead(nn.Module):
         self.logit_scale = nn.Parameter(torch.tensor(8.0))
         self.query_proj = nn.Linear(d_model, d_head)
         self.key_proj = nn.Linear(d_model, d_head)
-        self.padic_gate = nn.Parameter(torch.tensor(0.0))
-        self.gate_regularization_weight = 0.001
+        self.padic_gate = nn.Parameter(
+            torch.tensor(float(gate_init_logit)),
+            requires_grad=fixed_padic_gate is None,
+        )
+        self.gate_regularization_weight = float(gate_regularization_weight)
+        self.fixed_padic_gate = fixed_padic_gate
         self.value_proj = nn.Linear(d_model, d_head)
         self.dropout = nn.Dropout(dropout)
 
+    def _current_gate(self, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+        if self.fixed_padic_gate is None:
+            return self.padic_gate.sigmoid().to(dtype=dtype, device=device)
+        return torch.as_tensor(self.fixed_padic_gate, dtype=dtype, device=device)
+
     def gate_regularization_loss(self) -> torch.Tensor:
+        if self.fixed_padic_gate is not None or self.gate_regularization_weight <= 0.0:
+            return self.padic_gate.new_tensor(0.0)
         gate = self.padic_gate.sigmoid()
         return self.gate_regularization_weight * (gate - 0.5).square()
 
@@ -388,7 +404,8 @@ class PadicAttentionHead(nn.Module):
         padic_logits = padic_logits - padic_logits.mean(dim=-1, keepdim=True)
         padic_std = padic_logits.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-3)
         padic_logits = padic_logits / padic_std
-        logits = content_logits + self.padic_gate.sigmoid() * padic_logits
+        gate = self._current_gate(content_logits.dtype, content_logits.device)
+        logits = content_logits + gate * padic_logits
 
         if key_padding_mask is not None:
             logits = logits.masked_fill(key_padding_mask.unsqueeze(1), torch.finfo(logits.dtype).min)
@@ -405,7 +422,7 @@ class PadicAttentionHead(nn.Module):
             out = out * (~key_padding_mask).unsqueeze(-1).to(out.dtype)
         if not return_metrics:
             return out, weights
-        metrics = {"padic_gate": self.padic_gate.sigmoid().detach()}
+        metrics = {"padic_gate": gate.detach()}
         metrics.update(_attention_hierarchy_metrics(weights, digits, self.valuation.p, key_padding_mask))
         return out, weights, metrics
 
@@ -421,6 +438,9 @@ class PadicMultiHeadAttention(nn.Module):
         dropout: float = 0.1,
         hard_match: bool = False,
         temperature_decay: float = 0.0,
+        gate_init_logit: float = 0.0,
+        gate_regularization_weight: float = 0.001,
+        fixed_padic_gate: float | None = None,
     ) -> None:
         super().__init__()
         if d_model % n_heads != 0:
@@ -436,6 +456,9 @@ class PadicMultiHeadAttention(nn.Module):
                     dropout=dropout,
                     hard_match=hard_match,
                     temperature_decay=temperature_decay,
+                    gate_init_logit=gate_init_logit,
+                    gate_regularization_weight=gate_regularization_weight,
+                    fixed_padic_gate=fixed_padic_gate,
                 )
                 for _ in range(n_heads)
             ]
@@ -507,6 +530,9 @@ class PadicTransformerLayer(nn.Module):
         dropout: float = 0.1,
         hard_match: bool = False,
         temperature_decay: float = 0.0,
+        gate_init_logit: float = 0.0,
+        gate_regularization_weight: float = 0.001,
+        fixed_padic_gate: float | None = None,
     ) -> None:
         super().__init__()
         self.self_attn = PadicMultiHeadAttention(
@@ -518,6 +544,9 @@ class PadicTransformerLayer(nn.Module):
             dropout=dropout,
             hard_match=hard_match,
             temperature_decay=temperature_decay,
+            gate_init_logit=gate_init_logit,
+            gate_regularization_weight=gate_regularization_weight,
+            fixed_padic_gate=fixed_padic_gate,
         )
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
@@ -577,6 +606,9 @@ class PadicAttentionEncoder(nn.Module):
         dropout: float = 0.1,
         hard_match: bool = False,
         temperature_decay: float = 0.0,
+        gate_init_logit: float = 0.0,
+        gate_regularization_weight: float = 0.001,
+        fixed_padic_gate: float | None = None,
     ) -> None:
         super().__init__()
         self.layers = nn.ModuleList(
@@ -591,6 +623,9 @@ class PadicAttentionEncoder(nn.Module):
                     dropout=dropout,
                     hard_match=hard_match,
                     temperature_decay=temperature_decay,
+                    gate_init_logit=gate_init_logit,
+                    gate_regularization_weight=gate_regularization_weight,
+                    fixed_padic_gate=fixed_padic_gate,
                 )
                 for _ in range(n_layers)
             ]
@@ -659,6 +694,9 @@ class PadicAttentionAnomalyDetector(nn.Module):
         max_seq_len: int = 256,
         hard_match: bool = False,
         temperature_decay: float = 0.0,
+        gate_init_logit: float = 0.0,
+        gate_regularization_weight: float = 0.001,
+        fixed_padic_gate: float | None = None,
     ) -> None:
         super().__init__()
         self.p = p
@@ -676,6 +714,9 @@ class PadicAttentionAnomalyDetector(nn.Module):
             dropout=dropout,
             hard_match=hard_match,
             temperature_decay=temperature_decay,
+            gate_init_logit=gate_init_logit,
+            gate_regularization_weight=gate_regularization_weight,
+            fixed_padic_gate=fixed_padic_gate,
         )
         self.head = AnomalyHead(d_model=d_model, hidden_dim=head_hidden, dropout=dropout)
 

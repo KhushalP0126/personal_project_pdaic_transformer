@@ -113,6 +113,40 @@ results/ip_day4_tuning.json
 results/ip_day4_tuning.md
 ```
 
+Day 5 multi-seed validation for the best Day 4 config:
+
+```bash
+make ip-day5
+```
+
+Fast first check:
+
+```bash
+make ip-day5-fast
+```
+
+The aggregate Day 5 report is written to:
+
+```text
+results/ip_day5_multiseed.json
+results/ip_day5_multiseed.md
+```
+
+### Gate ablation
+
+The IP experiment runner now exposes fixed and learned gate variants directly:
+
+```bash
+# fixed gate ablations
+.venv/bin/python scripts/run_ip_experiment.py --device cpu --fixed-padic-gate 0.0 ...
+.venv/bin/python scripts/run_ip_experiment.py --device cpu --fixed-padic-gate 0.25 ...
+.venv/bin/python scripts/run_ip_experiment.py --device cpu --fixed-padic-gate 0.5 ...
+.venv/bin/python scripts/run_ip_experiment.py --device cpu --fixed-padic-gate 1.0 ...
+
+# learned gate without the 0.5 pullback
+.venv/bin/python scripts/run_ip_experiment.py --device cpu --gate-regularization-weight 0.0 ...
+```
+
 ### Train and evaluate the Hensel hierarchy model
 
 CPU sanity training:
@@ -226,17 +260,23 @@ What is already in place:
 
 What remains open:
 
-- Day 4 tuning on the IP-prefix task
-- Day 5 multi-seed table for the best small CPU config
-- stronger evidence that p-adic structure is the cause of improvement
-- multiple seeds with mean and standard deviation
-- clean randomized-hierarchy ablations
-- eventual validation on BETH or a real IP/network-traffic dataset
+- stronger evidence on real traffic or BETH-style data
+- more seeds or confidence intervals for the vanilla comparison
+- a cleaner explanation for why the learned gate stays near `0.5`
+- a stronger causal story for when the p-adic branch helps versus hurts
 - a tighter paper narrative
 
 ## Current Evidence From Results
 
-The current results do **not** confirm the central hypothesis yet. They show useful signal, but the evidence is still weak and mixed.
+The current synthetic IP-prefix results support a modest claim:
+
+```text
+true 2-adic attention consistently beats shuffled/random hierarchy controls,
+but the margin over a vanilla transformer is still unstable.
+```
+
+That is enough for a workshop-style synthetic result, but it is not yet enough
+for a strong general claim about p-adic attention.
 
 ### IP-prefix Day 3 result
 
@@ -261,85 +301,71 @@ true 2-adic > random
 
 That suggests the real IP-prefix hierarchy is contributing useful signal. When the hierarchy is destroyed by shuffled or random remaps, AUROC falls back near the vanilla transformer.
 
-The result is not final evidence. The margin over logistic regression and IsolationForest is small, and the run is only one seed and one epoch. The PDAIC gate also stayed near initialization (`padic_gate ~= 0.5`), so Day 4 should test whether more epochs or slightly larger models make the p-adic branch move.
+The result is only a green light. It is one seed and one epoch, so it does not
+carry the paper by itself.
 
-### Central finding
+### IP-prefix Day 4 tuning result
 
-`results/trained_attention_eval.json` is the most important hierarchy-control result so far:
+`results/ip_day4_tuning.json` picks the best small CPU configuration for Day 5:
 
-| Variant | AUROC |
+| Config | True AUROC | Vanilla AUROC | Shuffled AUROC | Random AUROC | True - Best Control |
+|---|---:|---:|---:|---:|---:|
+| `epochs3_w16_d64_l1_drop01` | 0.6559 | 0.5339 | 0.5111 | 0.5352 | 0.1207 |
+
+This is the strongest single-seed configuration found in the CPU tuning pass,
+and it became the fixed Day 5 candidate.
+
+### IP-prefix Day 5 multi-seed result
+
+`results/ip_day5_multiseed.json` is the paper-critical synthetic result for the
+current repo direction:
+
+| Comparison | Result |
 |---|---:|
-| true | 0.521 |
-| shuffled | 0.473 |
-| random | 0.486 |
+| True 2-adic beats vanilla | `2/3` seeds |
+| True 2-adic beats best shuffled/random control | `3/3` seeds |
+| Mean true - vanilla AUROC gap | `+0.0317 ± 0.0823` |
+| Mean true - best control AUROC gap | `+0.0695 ± 0.0467` |
 
-The true hierarchy checkpoint is better than shuffled and random hierarchy, which is the expected direction. The gap is small, and the absolute AUROC values are weak. This checkpoint came from the small CPU smoke run (`d_model=64`), so it is not conclusive. It is a signal to re-test with a stronger checkpoint, not proof.
+The promising part is the control story: true 2-adic wins against shuffled or
+random hierarchy in every seed. The weaker part is the vanilla comparison:
+there is still one seed where vanilla wins, and the standard deviation on the
+true-minus-vanilla gap is large.
 
-### Baseline report
+### Gate ablation result
 
-`results/baseline_report.json` is the most concerning result:
+The gate is not broken. It is behaving like the code encourages: it starts at
+`sigmoid(0.0) = 0.5`, and the default regularizer pulls it back toward `0.5`.
+That means a gate near `0.5` is not evidence that the p-adic branch is unused.
 
-| Model | AUROC |
-|---|---:|
-| standard_transformer | 0.611 |
-| isolation_forest | 0.584 |
-| padic_attention_true | 0.500 |
-| padic_attention_shuffled | 0.533 |
-| padic_attention_random | 0.504 |
+The useful ablation is whether performance drops when the gate is fixed to
+`0.0`. On the Day 5 setup, it does not. In fact, the strongest of the quick
+ablations was:
 
-The p-adic attention model with the true hierarchy loses to the standard transformer and IsolationForest on the hierarchy-rule dataset. Shuffled hierarchy scoring higher than true hierarchy is the opposite of what the hypothesis requires. This comparison is not final because the baseline run used small configs and only 5 epochs, but it is the strongest warning sign in the current evidence.
+| Variant | Mean true - vanilla | Mean true - best control |
+|---|---:|---:|
+| `fixed_gate_0` | `+0.0532` | `+0.0907` |
+| `fixed_gate_025` | `+0.0407` | `+0.0783` |
+| `fixed_gate_05` | `+0.0317` | `+0.0695` |
+| `fixed_gate_1` | `+0.0255` | `+0.0638` |
+| `learned_no_reg` | `+0.0317` | `+0.0695` |
 
-### Prime comparisons
+The immediate conclusion is narrow but important: on this synthetic Day 5
+budget, the hierarchy-control advantage is real, but the learned gate itself is
+not the source of the gain. Forcing the gate to `0.0` performed best, while
+removing the gate regularizer did not materially move the learned gate off its
+`~0.5` baseline.
 
-The vanilla prime sweep shows `p=3` performs best:
+### Practical read on the evidence
 
-| Prime | AUROC |
-|---:|---:|
-| 3 | 0.688 |
-| 5 | 0.668 |
-| 7 | 0.648 |
-
-The PDAIC attention sweep shows the same pattern with a stronger `p=3` result:
-
-| Prime | AUROC |
-|---:|---:|
-| 3 | 0.730 |
-| 5 | 0.652 |
-| 7 | 0.656 |
-
-This is the cleanest positive result so far. Smaller primes give deeper trees for fixed `r`, so `p=3` having the strongest hierarchy signal is plausible. PDAIC attention improves over the non-attention model at `p=3` by about four AUROC points in these runs.
-
-### Realistic run
-
-`results/training_log.json` reports a high AUROC around 0.84, but the run is not structurally strong evidence yet. The validation set has only 20 anomalies because the realistic attack fraction is `0.005`. Best F1 is low, and the model mostly predicts normal while occasionally catching a true anomaly.
-
-The score gap does grow during training, which suggests real signal, but the AUROC estimate is noisy with so few positives. This run needs more validation anomalies or multiple seeds before it can support a strong claim.
-
-### Threshold tuning
-
-`results/tune_threshold.json` is currently the cleanest training run. It reaches about 0.743 AUROC on a more balanced synthetic setup. The ranking signal is real, but the train/validation loss gap is still large, which points to overfitting.
-
-### Over/underfit diagnostic
-
-`results/over_underfit.json` confirms the small-model problem. AUROC plateaus near 0.58 while validation loss diverges after the early epochs. The smaller `d_model=128` setup is underpowered or overfitting the available training distribution.
-
-### Attention sweep
-
-`results/p_base_attention_sweep.json` shows the untrained `padic_gate` near `0.1192`, which is `sigmoid(-2.0)`. Because that sweep is untrained, it mostly measures the prior. It also shows the current gate initialization is very conservative, so the p-adic term contributes only a small additive bias at startup.
-
-### Critical problems
-
-1. The p-adic gate may be too closed. Starting at `sigmoid(-2.0) ~= 0.119` makes the p-adic bias weak. A stronger test should initialize `padic_gate` at `0.0`, or add a regularizer that prevents the gate from staying near zero.
-2. The baseline comparison is not yet fair. `make baselines` used small configs and 5 epochs, while the stronger training runs use more compute. Re-run baselines with matched epochs and model sizes before drawing conclusions.
-3. Validation loss diverges in meaningful runs. Train loss drops while validation loss climbs, so the model is memorizing the synthetic distribution. This needs more diverse training data, stronger dropout, weight-decay tuning, or better hierarchy-rule generation.
-
-### Next experiment order
-
-1. Change `padic_gate` initialization from `-2.0` to `0.0`.
-2. Re-run `make train`.
-3. Re-run `make eval` against the new checkpoint.
-4. Re-run `make baselines` with around 20 epochs or matched compute.
-5. Treat `true >> shuffled/random` as the key evidence threshold. If that does not appear, the hierarchy hypothesis needs rethinking.
+1. The synthetic IP-prefix claim is strongest when phrased as a hierarchy
+   control result: true 2-adic beats shuffled/random consistently.
+2. The repo does not yet have a stable claim that true 2-adic reliably beats a
+   vanilla transformer across seeds.
+3. The gate ablation weakens any argument that the current learned gate is the
+   mechanism behind the improvement.
+4. The next serious step is real-data validation or a stronger causal ablation,
+   not another broad synthetic sweep.
 
 ## What This Repo Is Testing
 
@@ -487,11 +513,11 @@ IP routing is no longer just a pivot; it is the current paper path. IP addresses
 ## Recommended Experiment Order
 
 1. Use `make ip-cpu` as the reproducibility command for the IP-prefix experiment.
-2. Day 4: tune only the small CPU grid: window size `16/32`, `d_model` `64/128`, layers `1/2`, dropout `0.1/0.2`, epochs `1/3`.
-3. Keep `p=2, r=32`; do not spend time on `p=3,5,7` for the IP paper.
-4. Compare true 2-adic attention against vanilla, shuffled 2-adic, random 2-adic, IsolationForest, and logistic regression.
-5. Day 5: run three seeds on the best small CPU config and report AUROC/F1 mean and standard deviation.
-6. Save attention diagnostics for every final run: `padic_attention_corr`, `hierarchy_gap`, `same_prefix_attention`, `diff_prefix_attention`, and `padic_gate`.
+2. Use `make ip-day4` only when you need to re-run the small CPU tuning sweep.
+3. Use `make ip-day5` for the three-seed synthetic validation table.
+4. Use `--fixed-padic-gate` and `--gate-regularization-weight` for causal gate ablations before changing model internals again.
+5. Save attention diagnostics for every final run: `padic_attention_corr`, `hierarchy_gap`, `same_prefix_attention`, `diff_prefix_attention`, and `padic_gate`.
+6. Treat `true >> shuffled/random` as the primary synthetic success condition; treat `true > vanilla` as desirable but not yet stable.
 7. After the synthetic IP table is stable, validate on BETH or a real IP/network-traffic dataset.
 
 ## Quick Start

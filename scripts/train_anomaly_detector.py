@@ -68,6 +68,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attention", action="store_true", help="Use the soft p-adic attention model")
     parser.add_argument("--hard-match", action="store_true", help="Use exact digit equality instead of learned embeddings for p-adic valuation")
     parser.add_argument("--d-digit", type=int, default=16, help="Per-digit embedding width for soft attention")
+    parser.add_argument("--gate-init-logit", type=float, default=0.0)
+    parser.add_argument("--gate-regularization-weight", type=float, default=0.001)
+    parser.add_argument("--fixed-padic-gate", type=float, default=None)
     parser.add_argument(
         "--temperature-decay",
         type=float,
@@ -111,6 +114,9 @@ def main() -> None:
         d_digit=args.d_digit,
         hard_match=args.hard_match,
         temperature_decay=args.temperature_decay,
+        gate_init_logit=args.gate_init_logit,
+        gate_regularization_weight=args.gate_regularization_weight,
+        fixed_padic_gate=args.fixed_padic_gate,
         dropout=args.dropout,
         window_size=args.window_size,
         attack_fraction=args.attack_fraction,
@@ -166,6 +172,9 @@ def main() -> None:
                 max_seq_len=cfg.max_seq_len,
                 hard_match=cfg.hard_match,
                 temperature_decay=cfg.temperature_decay,
+                gate_init_logit=cfg.gate_init_logit,
+                gate_regularization_weight=cfg.gate_regularization_weight,
+                fixed_padic_gate=cfg.fixed_padic_gate,
             )
 
         train(config, device, model_factory=factory)

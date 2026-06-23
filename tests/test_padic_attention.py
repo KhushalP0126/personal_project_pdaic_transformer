@@ -134,6 +134,42 @@ class TestPadicAttentionHead(unittest.TestCase):
         gate = float(metrics["padic_gate"].item())
         self.assertAlmostEqual(gate, 0.5, places=6)
 
+    def test_fixed_padic_gate_is_reported_in_metrics(self) -> None:
+        head = PadicAttentionHead(
+            p=3,
+            r=8,
+            d_model=32,
+            d_head=16,
+            d_digit=8,
+            fixed_padic_gate=0.25,
+        )
+        digits = torch.randint(0, 3, (2, 5, 8))
+        x = torch.randn(2, 5, 32)
+        _, _, metrics = head(digits, x, return_metrics=True)
+        self.assertAlmostEqual(float(metrics["padic_gate"].item()), 0.25, places=6)
+
+    def test_fixed_padic_gate_disables_gate_regularization(self) -> None:
+        head = PadicAttentionHead(
+            p=3,
+            r=8,
+            d_model=32,
+            d_head=16,
+            d_digit=8,
+            fixed_padic_gate=1.0,
+        )
+        self.assertEqual(float(head.gate_regularization_loss().item()), 0.0)
+
+    def test_zero_gate_regularization_weight_disables_penalty(self) -> None:
+        head = PadicAttentionHead(
+            p=3,
+            r=8,
+            d_model=32,
+            d_head=16,
+            d_digit=8,
+            gate_regularization_weight=0.0,
+        )
+        self.assertEqual(float(head.gate_regularization_loss().item()), 0.0)
+
     def test_attention_seq_len_one_is_finite(self) -> None:
         head = PadicAttentionHead(p=3, r=8, d_model=32, d_head=16, d_digit=8)
         digits = torch.randint(0, 3, (2, 1, 8))

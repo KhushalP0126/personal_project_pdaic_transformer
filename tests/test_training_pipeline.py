@@ -479,6 +479,29 @@ class TestTrainingSmoke(unittest.TestCase):
         self.assertTrue(torch.isfinite(torch.tensor(metrics["hierarchy_gap"])).item())
         self.assertTrue(torch.isfinite(torch.tensor(metrics["padic_gate"])).item())
 
+    def test_collect_padic_gate_stats_reports_fixed_gate_value(self) -> None:
+        from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
+        from padic_transformer.training import _collect_padic_gate_stats
+
+        model = PadicAttentionAnomalyDetector(
+            p=3,
+            r=8,
+            d_model=32,
+            n_heads=2,
+            n_layers=1,
+            ffn_dim=64,
+            head_hidden=16,
+            d_digit=8,
+            fixed_padic_gate=0.25,
+        )
+        stats = _collect_padic_gate_stats(model)
+        self.assertTrue(stats["has_padic_gates"])
+        self.assertEqual(stats["gate_count"], 2)
+        self.assertAlmostEqual(stats["gate_mean"], 0.25, places=6)
+        for gate in stats["gates"]:
+            self.assertEqual(gate["mode"], "fixed")
+            self.assertIsNone(gate["raw"])
+
     def test_synthetic_pos_weight_override_is_respected(self) -> None:
         from padic_transformer.training import TrainConfig, train
 

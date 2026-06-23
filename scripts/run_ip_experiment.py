@@ -59,6 +59,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-layers", type=int, default=1)
     parser.add_argument("--d-digit", type=int, default=8)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--gate-init-logit", type=float, default=0.0)
+    parser.add_argument("--gate-regularization-weight", type=float, default=0.001)
+    parser.add_argument("--fixed-padic-gate", type=float, default=None)
     parser.add_argument("--output-json", default="results/ip_synthetic.json")
     parser.add_argument("--output-md", default="results/ip_synthetic.md")
     return parser.parse_args()
@@ -369,6 +372,9 @@ def run_padic_variant(
         d_digit=args.d_digit,
         dropout=args.dropout,
         max_seq_len=args.window_size,
+        gate_init_logit=args.gate_init_logit,
+        gate_regularization_weight=args.gate_regularization_weight,
+        fixed_padic_gate=args.fixed_padic_gate,
     ).to(device)
     result = train_digit_model(
         model,

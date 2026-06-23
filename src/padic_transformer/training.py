@@ -129,14 +129,18 @@ def _accumulation_scale(step: int, total_steps: int, grad_accum: int) -> int:
 
 def _collect_padic_gate_stats(model: nn.Module) -> dict[str, object]:
     gates = []
-
-    for name, param in model.named_parameters():
-        if name.endswith("padic_gate"):
+    for name, module in model.named_modules():
+        if hasattr(module, "_current_gate") and hasattr(module, "padic_gate"):
+            gate_tensor = module._current_gate(torch.float32, module.padic_gate.device)
+            raw_value = None
+            if getattr(module, "fixed_padic_gate", None) is None:
+                raw_value = float(module.padic_gate.detach().cpu().item())
             gates.append(
                 {
                     "name": name,
-                    "raw": float(param.detach().cpu().item()),
-                    "sigmoid": float(param.detach().cpu().sigmoid().item()),
+                    "raw": raw_value,
+                    "sigmoid": float(gate_tensor.detach().cpu().item()),
+                    "mode": "fixed" if getattr(module, "fixed_padic_gate", None) is not None else "learned",
                 }
             )
 
@@ -174,6 +178,9 @@ class TrainConfig:
     d_digit: int = 16
     hard_match: bool = False
     temperature_decay: float = 0.0
+    gate_init_logit: float = 0.0
+    gate_regularization_weight: float = 0.001
+    fixed_padic_gate: float | None = None
     dropout: float = 0.1
 
     window_size: int = 32

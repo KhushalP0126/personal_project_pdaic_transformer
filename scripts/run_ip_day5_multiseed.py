@@ -46,6 +46,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-layers", type=int, default=1)
     parser.add_argument("--d-digit", type=int, default=8)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--gate-init-logit", type=float, default=0.0)
+    parser.add_argument("--gate-regularization-weight", type=float, default=0.001)
+    parser.add_argument("--fixed-padic-gate", type=float, default=None)
     parser.add_argument("--output-json", default="results/ip_day5_multiseed.json")
     parser.add_argument("--output-md", default="results/ip_day5_multiseed.md")
     return parser.parse_args()
@@ -102,11 +105,17 @@ def run_seed(args: argparse.Namespace, seed: int) -> dict[str, Any]:
         str(args.d_digit),
         "--dropout",
         str(args.dropout),
+        "--gate-init-logit",
+        str(args.gate_init_logit),
+        "--gate-regularization-weight",
+        str(args.gate_regularization_weight),
         "--output-json",
         str(json_path.relative_to(REPO_ROOT)),
         "--output-md",
         str(md_path.relative_to(REPO_ROOT)),
     ]
+    if args.fixed_padic_gate is not None:
+        command.extend(["--fixed-padic-gate", str(args.fixed_padic_gate)])
     print(f"\n=== Day 5 seed {seed} ===", flush=True)
     subprocess.run(command, cwd=REPO_ROOT, check=True)
     report = json.loads(json_path.read_text(encoding="utf-8"))
@@ -289,6 +298,9 @@ def main() -> None:
             "n_layers": args.n_layers,
             "d_digit": args.d_digit,
             "dropout": args.dropout,
+            "gate_init_logit": args.gate_init_logit,
+            "gate_regularization_weight": args.gate_regularization_weight,
+            "fixed_padic_gate": args.fixed_padic_gate,
         },
         "runs": [
             {
