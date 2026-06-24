@@ -148,27 +148,6 @@ Not supported:
 - the method generalizes to real traffic
 - routing efficiency improvement
 
-### Historical Day 5 path
-
-If you want the older three-seed IP-prefix validation path rather than the current study:
-
-```bash
-make ip-day5
-```
-
-Fast first check:
-
-```bash
-make ip-day5-fast
-```
-
-The aggregate Day 5 report is written to:
-
-```text
-results/ip_day5_multiseed.json
-results/ip_day5_multiseed.md
-```
-
 ### Train and evaluate the Hensel hierarchy model
 
 CPU sanity training:
@@ -352,20 +331,11 @@ The active direction is IP-prefix anomaly detection. The reusable idea is broade
 | Application domain | Readiness | Codebase components reused | Required changes | Estimated pivot time |
 |---|---:|---|---|---|
 | IP routing and network analytics | 95% | Core transformer, p-adic attention, IP-prefix dataset, experiment runner, and classification head. | Add raw PCAP/network-log ingestion after the synthetic IP result is stable. | active target |
-| Lexical semantics and WordNet | 75% | Core transformer, p-adic attention, and classification head. | Replace the syscall tokenizer with a parser that maps words to WordNet tree/path IDs. | 1 day |
-| Genomics and phylogenetics | 45% | Token embedding layer, classification head, and training loop. | Modify attention to accept a supplied evolutionary-tree distance matrix instead of computing shared-prefix distances from sequence digits. | 3-5 days |
+| Lexical semantics and WordNet | 75% | Core transformer, p-adic attention, and classification head. | Replace the syscall tokenizer with a parser that maps words to WordNet tree/path IDs. | short |
+| Genomics and phylogenetics | 45% | Token embedding layer, classification head, and training loop. | Modify attention to accept a supplied evolutionary-tree distance matrix instead of computing shared-prefix distances from sequence digits. | medium |
 | Document retrieval and Wasserstein-style matching | 15% | Token embedding layer and some raw attention math. | Replace the classification head, rewrite the objective, build a Siamese/twin-network setup, and add optimal-transport solvers. | 1-2 weeks |
 
 IP routing is no longer just a pivot; it is the current paper path. IP addresses are hierarchical discrete strings, so `p=2, r=32` gives a natural prefix representation. Lexical semantics is the next most plausible future pivot because WordNet already gives a tree structure; the main work would be data preparation rather than model surgery.
-
-## Recommended Experiment Order
-
-1. Use `make ip-study-cpu` as the primary reproducibility command.
-2. Use `make ip-transition-cpu` if you want the harder transition-only slice by itself.
-3. Use `make ip-day5` only if you need the older historical multiseed path.
-4. Save attention diagnostics for every final run: `padic_alpha`, `padic_attention_corr`, `hierarchy_gap`, `content_logit_std`, and `padic_logit_std`.
-5. Treat the simple-task win as the current positive result and treat transfer/realistic rows as the main limitation.
-6. After the controlled study is stable, validate on BETH or a real IP/network-traffic dataset.
 
 ## Quick Start
 
@@ -399,8 +369,6 @@ make train
 - `make ip-cpu` runs the CPU IP-prefix synthetic experiment.
 - `make ip-transition-cpu` runs the harder transition-based CPU IP experiment.
 - `make ip-study-cpu` runs the multi-seed characterization study and writes `final_summary`.
-- `make ip-day5` runs the three-seed CPU IP-prefix validation.
-- `make ip-day5-fast` runs the smaller CPU Day 5 smoke pass.
 - `make test-unit` runs the unit tests without re-entering package setup.
 - `make check-study` compile-checks the characterization study runner.
 - `make clean` removes caches, checkpoints, and generated outputs.
