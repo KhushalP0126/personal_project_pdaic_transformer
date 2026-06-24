@@ -28,7 +28,7 @@ Paper: 2-adic Prefix-Aware Transformer for IP Traffic Anomaly Detection
 Goal: workshop/student/arXiv-style draft
 Compute: CPU only
 Primary dataset path: synthetic IPv4 prefix windows
-Primary command: make ip-cpu
+Primary command: make ip-study-cpu
 ```
 
 The project is now using the older Hensel/syscall-style synthetic work as supporting infrastructure, not as the main paper target. The active claim is modest:
@@ -38,6 +38,33 @@ The project is now using the older Hensel/syscall-style synthetic work as suppor
 ```
 
 The codebase is in a usable experimental state for the IP-prefix direction, but it is still not publication-ready.
+
+## Attention Mechanism
+
+There are two separate p-adic mechanisms in the current study:
+
+| Mechanism | Code variant | Meaning |
+|---|---|---|
+| Hensel digit embedding | `hensel_only` | p-adic coordinate representation |
+| Ultrametric attention bias | `hensel_padic_sigmoid`, `hensel_padic_signed_alpha` | p-adic relational prior between tokens |
+
+The attention path itself is:
+
+```text
+content_logits = QK^T / sqrt(d)
+padic_logits = normalized p-adic valuation matrix
+attention_logits = content_logits + alpha * padic_logits
+```
+
+The three explicit bias modes are:
+
+| Mode | Alpha behavior | Interpretation |
+|---|---|---|
+| `none` | `alpha = 0` | Hensel-only, no explicit p-adic attention bias |
+| `sigmoid` | `alpha in [0,1]` | old positive-only p-adic gate |
+| `signed_alpha` | `alpha = alpha_max * tanh(raw_alpha)` | can attract, ignore, or oppose p-adic closeness |
+
+The important result is that signed alpha mostly improves robustness by letting the explicit bias shrink back toward zero when it is not useful.
 
 ## Reproducibility
 
@@ -98,6 +125,7 @@ results/final_summary.md
 The controlled study compares:
 
 - `standard_transformer`
+- `flat_digit_transformer`
 - `hensel_only`
 - `hensel_padic_sigmoid`
 - `hensel_padic_signed_alpha`
@@ -109,6 +137,8 @@ across:
 - simple->transition transfer
 - transition->simple transfer
 - realistic idle-heavy proxy data
+
+The raw-token `standard_transformer` is intentionally strict: it builds a token vocabulary from the training split and sends unseen validation addresses to one OOV token. That baseline tests raw-token generalization without digit sharing. It is part of the inductive-bias question, not a claim that standard Transformers fail in general.
 
 ### Reproduce the earlier IP-prefix results
 

@@ -31,7 +31,9 @@ make ip-study-cpu
 Equivalent direct command:
 
 ```bash
-.venv/bin/python scripts/run_ip_characterization_study.py --device cpu
+.venv/bin/python scripts/run_ip_characterization_study.py \
+  --device cpu \
+  --seeds 20260504 20260505 20260506
 ```
 
 Outputs:
@@ -46,6 +48,7 @@ results/final_summary.md
 Variants:
 
 - `standard_transformer`
+- `flat_digit_transformer`
 - `hensel_only`
 - `hensel_padic_sigmoid`
 - `hensel_padic_signed_alpha`
@@ -62,15 +65,17 @@ Tasks:
 
 From `results/final_summary.md`:
 
-- Simple synthetic: signed alpha `0.6260`, old gate `0.6089`, hensel-only `0.5846`, standard `0.5000`
-- Transition synthetic: signed alpha `0.5252`, old gate `0.5205`, hensel-only `0.4622`, standard `0.5000`
-- Cross simple->transition: hensel-only `0.5400` is best
-- Cross transition->simple: standard `0.5000` is best, all others are worse
-- Realistic proxy: standard `0.7485`, signed alpha `0.7484`, hensel-only `0.6895`, old gate `0.6013`
+- Simple synthetic: signed alpha `0.6065 +- 0.0191`, old gate `0.5811 +- 0.0461`, hensel-only `0.5703 +- 0.0634`, flat digit `0.5372 +- 0.0209`, standard `0.5000`
+- Transition synthetic: standard `0.5000` is best; signed alpha is `0.4982 +- 0.0075`
+- Cross simple->transition: signed alpha `0.5016 +- 0.0257`, old gate `0.5003 +- 0.0402`, standard `0.5000`
+- Cross transition->simple: flat digit `0.5148 +- 0.0467` is best
+- Realistic proxy: standard `0.7446 +- 0.0530`, flat digit `0.7315 +- 0.0741`, hensel-only `0.7186 +- 0.0657`, signed alpha `0.7100 +- 0.0582`, old gate `0.6926 +- 0.0488`
 
 Interpretation:
 
-- Hensel coordinates matter on the IP tasks.
+- Simple synthetic still shows a real structured-signal win.
+- Signed alpha beats the old gate on the simple task by keeping alpha near zero, not by learning a strong positive p-adic pull.
+- Transition and generator-shift rows are close to chance, so transfer remains weak.
+- The flat digit baseline is strong enough that the paper must separate “digitized prefix structure helps” from “specifically Hensel structure helps.”
 - The old sigmoid attention bias is not robust.
-- Signed alpha often matches or beats the old gate by shrinking the explicit bias toward zero.
 - Transfer remains weak under generator shift.

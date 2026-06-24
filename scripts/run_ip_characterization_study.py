@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -20,6 +21,8 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from padic_transformer.baselines_and_validation import StandardTransformerDetector
+from padic_transformer.config import BenchmarkConfig
 from padic_transformer.dataset_ip import IPPrefixAnomalyDataset, IPPrefixDatasetConfig
 from padic_transformer.dataset_ip_transition import (
     IPPrefixTransitionAnomalyDataset,
@@ -30,23 +33,102 @@ from padic_transformer.metrics import binary_auroc
 from padic_transformer.model import PadicAnomalyDetector
 from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
 from padic_transformer.report_paths import safe_results_path
-from padic_transformer.config import BenchmarkConfig
 from padic_transformer.ultrametric import derive_seed, generate_clustered_hensel_dataset
-from padic_transformer.baselines_and_validation import StandardTransformerDetector
 
 
 VARIANT_ORDER = (
     "standard_transformer",
+    "flat_digit_transformer",
     "hensel_only",
     "hensel_padic_sigmoid",
     "hensel_padic_signed_alpha",
 )
+EXPERIMENT_ORDER = (
+    ("simple_synthetic", "Simple synthetic"),
+    ("transition_synthetic", "Transition"),
+    ("cross_generator_simple_to_transition", "Cross-generator simple->transition"),
+    ("cross_generator_transition_to_simple", "Cross-generator transition->simple"),
+    ("realistic_proxy", "Realistic proxy"),
+)
+CORE_METRICS = ("auroc", "f1", "precision", "recall", "accuracy", "train_time_s")
+ATTN_METRICS = (
+    "padic_alpha",
+    "raw_padic_alpha",
+    "padic_alpha_grad_norm",
+    "padic_attention_corr",
+    "hierarchy_gap",
+    "content_logit_std",
+    "padic_logit_std",
+)
+
+
+class FlatDigitTransformerDetector(nn.Module):
+    """Transformer over raw digit vectors without Hensel positional decomposition."""
+
+    def __init__(
+        self,
+        *,
+        p: int,
+        r: int,
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 4,
+        ffn_dim: int = 1024,
+        head_hidden: int = 128,
+        dropout: float = 0.1,
+        max_seq_len: int = 256,
+    ) -> None:
+        super().__init__()
+        self.p = p
+        self.r = r
+        self.d_model = d_model
+        self.token_proj = nn.Linear(r, d_model)
+        self.pos_embed = nn.Embedding(max_seq_len, d_model)
+        self.embed_drop = nn.Dropout(dropout)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=ffn_dim,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,
+            activation="gelu",
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers, enable_nested_tensor=False)
+        self.head = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, head_hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(head_hidden, 1),
+        )
+
+    def forward_with_features(
+        self,
+        digits: torch.Tensor,
+        padding_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        seq_len = digits.shape[1]
+        positions = torch.arange(seq_len, device=digits.device)
+        x = digits.to(torch.float32)
+        if self.p > 1:
+            x = x / float(self.p - 1)
+        x = self.token_proj(x) + self.pos_embed(positions).unsqueeze(0)
+        x = self.embed_drop(x)
+        h = self.encoder(x, src_key_padding_mask=padding_mask)
+        pooled = h.mean(dim=1)
+        logits = self.head(pooled).squeeze(-1)
+        return logits, pooled
+
+    def forward(self, digits: torch.Tensor, padding_mask: torch.Tensor | None = None) -> torch.Tensor:
+        logits, _ = self.forward_with_features(digits, padding_mask=padding_mask)
+        return logits
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["cpu", "auto", "cuda", "mps"], default="cpu")
-    parser.add_argument("--seed", type=int, default=20260504)
+    parser.add_argument("--seeds", nargs="+", type=int, default=[20260504, 20260505, 20260506])
     parser.add_argument("--train-samples", type=int, default=2048)
     parser.add_argument("--val-samples", type=int, default=512)
     parser.add_argument("--window-size", type=int, default=16)
@@ -205,7 +287,7 @@ def fit_digit_model(
     lr: float,
     pos_weight: float,
     device: torch.device,
-) -> tuple[nn.Module, float]:
+) -> tuple[nn.Module, float, float]:
     loader = DataLoader(
         TensorDataset(train_windows, train_labels),
         batch_size=batch_size,
@@ -327,7 +409,19 @@ def run_variant(
         metrics["train_time_s"] = train_time
         return metrics
 
-    if variant == "hensel_only":
+    if variant == "flat_digit_transformer":
+        model = FlatDigitTransformerDetector(
+            p=p,
+            r=r,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            ffn_dim=args.d_model * 4,
+            head_hidden=args.d_model // 2,
+            dropout=args.dropout,
+            max_seq_len=seq_len,
+        ).to(device)
+    elif variant == "hensel_only":
         model = PadicAnomalyDetector(
             p=p,
             r=r,
@@ -398,7 +492,7 @@ def run_variant(
     return metrics
 
 
-def make_simple_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
+def make_simple_datasets(args: argparse.Namespace, seed: int) -> tuple[Any, Any]:
     train_cfg = IPPrefixDatasetConfig(
         window_size=args.window_size,
         attack_fraction=args.attack_fraction,
@@ -406,7 +500,7 @@ def make_simple_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
         num_prefixes=args.num_prefixes,
         attack_min_len=args.attack_min_len,
         attack_max_len=args.attack_max_len,
-        seed=args.seed,
+        seed=seed,
     )
     val_cfg = IPPrefixDatasetConfig(
         window_size=args.window_size,
@@ -415,21 +509,21 @@ def make_simple_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
         num_prefixes=args.num_prefixes,
         attack_min_len=args.attack_min_len,
         attack_max_len=args.attack_max_len,
-        seed=derive_seed(args.seed, "ip_val"),
+        seed=derive_seed(seed, "ip_val"),
     )
     return IPPrefixAnomalyDataset(train_cfg, n_samples=args.train_samples), IPPrefixAnomalyDataset(
         val_cfg, n_samples=args.val_samples
     )
 
 
-def make_transition_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
+def make_transition_datasets(args: argparse.Namespace, seed: int) -> tuple[Any, Any]:
     train_cfg = IPPrefixTransitionDatasetConfig(
         window_size=args.window_size,
         attack_fraction=args.attack_fraction,
         prefix_len=args.prefix_len,
         num_prefixes=args.num_prefixes,
         num_groups=args.num_groups,
-        seed=args.seed,
+        seed=seed,
     )
     val_cfg = IPPrefixTransitionDatasetConfig(
         window_size=args.window_size,
@@ -437,14 +531,14 @@ def make_transition_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
         prefix_len=args.prefix_len,
         num_prefixes=args.num_prefixes,
         num_groups=args.num_groups,
-        seed=derive_seed(args.seed, "ip_transition_val"),
+        seed=derive_seed(seed, "ip_transition_val"),
     )
     return IPPrefixTransitionAnomalyDataset(train_cfg, n_samples=args.train_samples), IPPrefixTransitionAnomalyDataset(
         val_cfg, n_samples=args.val_samples
     )
 
 
-def make_realistic_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
+def make_realistic_datasets(args: argparse.Namespace, seed: int) -> tuple[Any, Any]:
     train_hensel = generate_clustered_hensel_dataset(
         BenchmarkConfig(
             p=3,
@@ -452,7 +546,7 @@ def make_realistic_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
             samples=args.realistic_samples,
             classes=args.realistic_classes,
             tokens_per_class=args.realistic_tokens_per_class,
-            seed=args.seed,
+            seed=seed,
         )
     )
     val_hensel = generate_clustered_hensel_dataset(
@@ -462,7 +556,7 @@ def make_realistic_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
             samples=args.realistic_samples,
             classes=args.realistic_classes,
             tokens_per_class=args.realistic_tokens_per_class,
-            seed=derive_seed(args.seed, "val_realistic_hensel"),
+            seed=derive_seed(seed, "val_realistic_hensel"),
         )
     )
     train_cfg = RealisticDatasetConfig(
@@ -471,7 +565,7 @@ def make_realistic_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
         idle_fraction=args.realistic_idle_fraction,
         attack_min_len=2,
         attack_max_len=min(8, args.realistic_window_size),
-        seed=args.seed,
+        seed=seed,
     )
     val_cfg = RealisticDatasetConfig(
         window_size=args.realistic_window_size,
@@ -479,7 +573,7 @@ def make_realistic_datasets(args: argparse.Namespace) -> tuple[Any, Any]:
         idle_fraction=args.realistic_idle_fraction,
         attack_min_len=2,
         attack_max_len=min(8, args.realistic_window_size),
-        seed=derive_seed(args.seed, "val_realistic_dataset"),
+        seed=derive_seed(seed, "val_realistic_dataset"),
     )
     return RealisticBusDataset(train_hensel, train_cfg, n_samples=args.train_samples), RealisticBusDataset(
         val_hensel, val_cfg, n_samples=args.val_samples
@@ -525,37 +619,193 @@ def run_experiment(
     return {
         "best_model": best_model,
         "models": results,
-        "takeaway": "",
     }
 
 
-def fill_takeaways(summary: dict[str, Any]) -> None:
-    simple = summary["experiments"]["simple_synthetic"]["models"]
-    transition = summary["experiments"]["transition_synthetic"]["models"]
-    cross_st = summary["experiments"]["cross_generator_simple_to_transition"]["models"]
-    cross_ts = summary["experiments"]["cross_generator_transition_to_simple"]["models"]
-    realistic = summary["experiments"]["realistic_proxy"]["models"]
+def run_seed(args: argparse.Namespace, seed: int, device: torch.device) -> dict[str, Any]:
+    torch.manual_seed(seed)
+    simple_train, simple_val = make_simple_datasets(args, seed)
+    transition_train, transition_val = make_transition_datasets(args, seed)
+    realistic_train, realistic_val = make_realistic_datasets(args, seed)
 
-    summary["experiments"]["simple_synthetic"]["takeaway"] = (
-        "signed alpha wins while collapsing the explicit bias near zero"
+    experiments: dict[str, Any] = {}
+    experiments["simple_synthetic"] = run_experiment(
+        "simple_synthetic",
+        simple_train.windows,
+        simple_train.labels,
+        simple_val.windows,
+        simple_val.labels,
+        p=2,
+        r=32,
+        seq_len=args.window_size,
+        args=args,
+        device=device,
     )
-    summary["experiments"]["transition_synthetic"]["takeaway"] = (
-        "signed alpha slightly beats the old gate while keeping alpha near zero"
+    experiments["transition_synthetic"] = run_experiment(
+        "transition_synthetic",
+        transition_train.windows,
+        transition_train.labels,
+        transition_val.windows,
+        transition_val.labels,
+        p=2,
+        r=32,
+        seq_len=args.window_size,
+        args=args,
+        device=device,
     )
-    summary["experiments"]["cross_generator_simple_to_transition"]["takeaway"] = (
-        "transfer is weak under generator shift"
-        if max(cross_st[m]["auroc"] for m in VARIANT_ORDER) < 0.6
-        else "some inductive bias survives simple-to-transition transfer"
+    experiments["cross_generator_simple_to_transition"] = run_experiment(
+        "cross_generator_simple_to_transition",
+        simple_train.windows,
+        simple_train.labels,
+        transition_val.windows,
+        transition_val.labels,
+        p=2,
+        r=32,
+        seq_len=args.window_size,
+        args=args,
+        device=device,
     )
-    summary["experiments"]["cross_generator_transition_to_simple"]["takeaway"] = (
-        "transfer is weak under reverse generator shift"
-        if max(cross_ts[m]["auroc"] for m in VARIANT_ORDER) < 0.6
-        else "reverse transfer retains useful signal"
+    experiments["cross_generator_transition_to_simple"] = run_experiment(
+        "cross_generator_transition_to_simple",
+        transition_train.windows,
+        transition_train.labels,
+        simple_val.windows,
+        simple_val.labels,
+        p=2,
+        r=32,
+        seq_len=args.window_size,
+        args=args,
+        device=device,
     )
-    del realistic
-    summary["experiments"]["realistic_proxy"]["takeaway"] = (
-        "signed alpha matches the standard transformer by neutralizing explicit bias"
+    experiments["realistic_proxy"] = run_experiment(
+        "realistic_proxy",
+        realistic_train.windows,
+        realistic_train.labels,
+        realistic_val.windows,
+        realistic_val.labels,
+        p=3,
+        r=8,
+        seq_len=args.realistic_window_size,
+        args=args,
+        device=device,
     )
+    return {"seed": seed, "experiments": experiments}
+
+
+def mean_std(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {"mean": float("nan"), "std": float("nan")}
+    if len(values) == 1:
+        return {"mean": float(values[0]), "std": 0.0}
+    return {
+        "mean": float(statistics.mean(values)),
+        "std": float(statistics.stdev(values)),
+    }
+
+
+def aggregate_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {"experiments": {}}
+    for experiment_key, _ in EXPERIMENT_ORDER:
+        exp_summary: dict[str, Any] = {"models": {}, "comparisons": {}}
+        for variant in VARIANT_ORDER:
+            variant_summary: dict[str, Any] = {}
+            for metric in CORE_METRICS + ATTN_METRICS:
+                values = []
+                for run in runs:
+                    metrics = run["experiments"][experiment_key]["models"][variant]
+                    if metric in metrics:
+                        values.append(float(metrics[metric]))
+                if values:
+                    variant_summary[metric] = mean_std(values)
+            exp_summary["models"][variant] = variant_summary
+
+        auroc_means = {
+            variant: exp_summary["models"][variant]["auroc"]["mean"]
+            for variant in VARIANT_ORDER
+        }
+        exp_summary["best_model"] = max(auroc_means, key=auroc_means.get)
+
+        comparisons = {
+            "hensel_only_minus_standard": [],
+            "hensel_only_minus_flat_digit": [],
+            "old_gate_minus_hensel_only": [],
+            "signed_alpha_minus_hensel_only": [],
+            "signed_alpha_minus_old_gate": [],
+            "signed_alpha_minus_flat_digit": [],
+        }
+        for run in runs:
+            models = run["experiments"][experiment_key]["models"]
+            comparisons["hensel_only_minus_standard"].append(
+                float(models["hensel_only"]["auroc"]) - float(models["standard_transformer"]["auroc"])
+            )
+            comparisons["hensel_only_minus_flat_digit"].append(
+                float(models["hensel_only"]["auroc"]) - float(models["flat_digit_transformer"]["auroc"])
+            )
+            comparisons["old_gate_minus_hensel_only"].append(
+                float(models["hensel_padic_sigmoid"]["auroc"]) - float(models["hensel_only"]["auroc"])
+            )
+            comparisons["signed_alpha_minus_hensel_only"].append(
+                float(models["hensel_padic_signed_alpha"]["auroc"]) - float(models["hensel_only"]["auroc"])
+            )
+            comparisons["signed_alpha_minus_old_gate"].append(
+                float(models["hensel_padic_signed_alpha"]["auroc"]) - float(models["hensel_padic_sigmoid"]["auroc"])
+            )
+            comparisons["signed_alpha_minus_flat_digit"].append(
+                float(models["hensel_padic_signed_alpha"]["auroc"]) - float(models["flat_digit_transformer"]["auroc"])
+            )
+        for name, values in comparisons.items():
+            exp_summary["comparisons"][name] = {
+                **mean_std(values),
+                "positive_seeds": sum(value > 0.0 for value in values),
+                "num_seeds": len(values),
+            }
+        summary["experiments"][experiment_key] = exp_summary
+    fill_takeaways(summary)
+    return summary
+
+
+def fill_takeaways(summary: dict[str, Any]) -> None:
+    simple = summary["experiments"]["simple_synthetic"]
+    transition = summary["experiments"]["transition_synthetic"]
+    cross_st = summary["experiments"]["cross_generator_simple_to_transition"]
+    cross_ts = summary["experiments"]["cross_generator_transition_to_simple"]
+    realistic = summary["experiments"]["realistic_proxy"]
+
+    simple_alpha = simple["models"]["hensel_padic_signed_alpha"]["padic_alpha"]["mean"]
+    simple["takeaway"] = (
+        "signed alpha wins while keeping explicit bias near zero"
+        if abs(simple_alpha) < 0.05
+        else "signed alpha wins with a non-trivial explicit hierarchy bias"
+    )
+
+    transition_alpha = transition["models"]["hensel_padic_signed_alpha"]["padic_alpha"]["mean"]
+    transition["takeaway"] = (
+        "transition task weakens the gain; signed alpha only edges the old gate"
+        if abs(transition_alpha) < 0.05
+        else "signed alpha keeps a task-specific explicit bias on the transition rule"
+    )
+
+    cross_st["takeaway"] = (
+        "Hensel-only is the strongest transfer model, but transfer remains weak"
+        if cross_st["best_model"] == "hensel_only"
+        else "generator shift remains the main failure mode"
+    )
+    cross_ts["takeaway"] = "reverse generator shift wipes out the structured advantage"
+
+    realistic_alpha = realistic["models"]["hensel_padic_signed_alpha"]["padic_alpha"]["mean"]
+    realistic_gap = abs(
+        realistic["models"]["hensel_padic_signed_alpha"]["auroc"]["mean"]
+        - realistic["models"]["standard_transformer"]["auroc"]["mean"]
+    )
+    realistic["takeaway"] = (
+        "signed alpha matches the raw-token baseline by neutralizing explicit bias"
+        if realistic_gap < 0.01 and abs(realistic_alpha) < 0.05
+        else "realistic proxy favors a weaker explicit bias than the old gate"
+    )
+
+
+def fmt_stat(stat: dict[str, float]) -> str:
+    return f"{stat['mean']:.4f} +- {stat['std']:.4f}"
 
 
 def json_ready(value: Any) -> Any:
@@ -570,28 +820,36 @@ def json_ready(value: Any) -> Any:
     return str(value)
 
 
-def write_markdown(path: Path, summary: dict[str, Any]) -> None:
+def write_markdown(path: Path, payload: dict[str, Any]) -> None:
+    aggregate = payload["aggregate"]
     lines = [
         "# Final Summary",
         "",
-        "| Task | Best model | Standard | Hensel-only | Old gate | Signed alpha | Takeaway |",
-        "|---|---|---:|---:|---:|---:|---|",
+        "## Variant meanings",
+        "",
+        "| Variant | Hensel embedding | Explicit p-adic attention bias | Purpose |",
+        "|---|---|---|---|",
+        "| `standard_transformer` | no | no | raw-token baseline with OOV fallback |",
+        "| `flat_digit_transformer` | no | no | flat digit/bit projection baseline |",
+        "| `hensel_only` | yes | no | tests whether Hensel coordinates alone help |",
+        "| `hensel_padic_sigmoid` | yes | yes, old sigmoid gate | tests positive-only ultrametric bias |",
+        "| `hensel_padic_signed_alpha` | yes | yes, signed alpha | tests whether the model should attract, ignore, or oppose p-adic closeness |",
+        "",
+        "## AUROC mean +- std",
+        "",
+        "| Task | Best model | Standard | Flat digit | Hensel-only | Old gate | Signed alpha | Takeaway |",
+        "|---|---|---:|---:|---:|---:|---:|---|",
     ]
-    for key, label in (
-        ("simple_synthetic", "Simple synthetic"),
-        ("transition_synthetic", "Transition"),
-        ("cross_generator_simple_to_transition", "Cross-generator simple->transition"),
-        ("cross_generator_transition_to_simple", "Cross-generator transition->simple"),
-        ("realistic_proxy", "Realistic proxy"),
-    ):
-        result = summary["experiments"][key]
+    for key, label in EXPERIMENT_ORDER:
+        result = aggregate["experiments"][key]
         models = result["models"]
         lines.append(
             f"| {label} | {result['best_model']} | "
-            f"{models['standard_transformer']['auroc']:.4f} | "
-            f"{models['hensel_only']['auroc']:.4f} | "
-            f"{models['hensel_padic_sigmoid']['auroc']:.4f} | "
-            f"{models['hensel_padic_signed_alpha']['auroc']:.4f} | "
+            f"{fmt_stat(models['standard_transformer']['auroc'])} | "
+            f"{fmt_stat(models['flat_digit_transformer']['auroc'])} | "
+            f"{fmt_stat(models['hensel_only']['auroc'])} | "
+            f"{fmt_stat(models['hensel_padic_sigmoid']['auroc'])} | "
+            f"{fmt_stat(models['hensel_padic_signed_alpha']['auroc'])} | "
             f"{result['takeaway']} |"
         )
 
@@ -604,42 +862,68 @@ def write_markdown(path: Path, summary: dict[str, Any]) -> None:
             "|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
-    for key, label in (
-        ("simple_synthetic", "Simple synthetic"),
-        ("transition_synthetic", "Transition"),
-        ("cross_generator_simple_to_transition", "Cross simple->transition"),
-        ("cross_generator_transition_to_simple", "Cross transition->simple"),
-        ("realistic_proxy", "Realistic proxy"),
-    ):
-        metrics = summary["experiments"][key]["models"]["hensel_padic_signed_alpha"]
+    for key, label in EXPERIMENT_ORDER:
+        metrics = aggregate["experiments"][key]["models"]["hensel_padic_signed_alpha"]
         lines.append(
             f"| {label} | "
-            f"{metrics.get('padic_alpha', float('nan')):.4f} | "
-            f"{metrics.get('raw_padic_alpha', float('nan')):.4f} | "
-            f"{metrics.get('padic_alpha_grad_norm', float('nan')):.4f} | "
-            f"{metrics.get('padic_attention_corr', float('nan')):.4f} | "
-            f"{metrics.get('hierarchy_gap', float('nan')):.4f} | "
-            f"{metrics.get('content_logit_std', float('nan')):.4f} | "
-            f"{metrics.get('padic_logit_std', float('nan')):.4f} |"
+            f"{fmt_stat(metrics['padic_alpha'])} | "
+            f"{fmt_stat(metrics['raw_padic_alpha'])} | "
+            f"{fmt_stat(metrics['padic_alpha_grad_norm'])} | "
+            f"{fmt_stat(metrics['padic_attention_corr'])} | "
+            f"{fmt_stat(metrics['hierarchy_gap'])} | "
+            f"{fmt_stat(metrics['content_logit_std'])} | "
+            f"{fmt_stat(metrics['padic_logit_std'])} |"
         )
 
+    lines.extend(
+        [
+            "",
+            "## Comparison gaps",
+            "",
+            "| Task | Hensel-standard | Hensel-flat | Old gate-Hensel | Signed-Hensel | Signed-old gate | Signed-flat |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for key, label in EXPERIMENT_ORDER:
+        comparisons = aggregate["experiments"][key]["comparisons"]
+        lines.append(
+            f"| {label} | "
+            f"{fmt_stat(comparisons['hensel_only_minus_standard'])} | "
+            f"{fmt_stat(comparisons['hensel_only_minus_flat_digit'])} | "
+            f"{fmt_stat(comparisons['old_gate_minus_hensel_only'])} | "
+            f"{fmt_stat(comparisons['signed_alpha_minus_hensel_only'])} | "
+            f"{fmt_stat(comparisons['signed_alpha_minus_old_gate'])} | "
+            f"{fmt_stat(comparisons['signed_alpha_minus_flat_digit'])} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Baseline note",
+            "",
+            "The raw-token `standard_transformer` builds its token vocabulary from the training split and maps unseen eval ids to one OOV token.",
+            "This deliberately tests raw-token generalization without digit sharing.",
+            "It is a defensible inductive-bias baseline, but not a claim that standard Transformers fail in general.",
+        ]
+    )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
     args = parse_args()
-    torch.manual_seed(args.seed)
     device = resolve_device(args.device)
     output_json = safe_results_path(REPO_ROOT, args.output_json)
     output_md = safe_results_path(REPO_ROOT, args.output_md)
 
-    simple_train, simple_val = make_simple_datasets(args)
-    transition_train, transition_val = make_transition_datasets(args)
-    realistic_train, realistic_val = make_realistic_datasets(args)
+    runs: list[dict[str, Any]] = []
+    for seed in args.seeds:
+        print(f"\n##### Seed {seed} #####", flush=True)
+        runs.append(run_seed(args, seed, device))
 
-    summary = {
+    aggregate = aggregate_runs(runs)
+    payload = {
         "config": {
-            "seed": args.seed,
+            "seeds": args.seeds,
             "device": device.type,
             "train_samples": args.train_samples,
             "val_samples": args.val_samples,
@@ -655,73 +939,12 @@ def main() -> None:
             "realistic_attack_fraction": args.realistic_attack_fraction,
             "realistic_idle_fraction": args.realistic_idle_fraction,
         },
-        "experiments": {},
+        "runs": runs,
+        "aggregate": aggregate,
     }
 
-    summary["experiments"]["simple_synthetic"] = run_experiment(
-        "simple_synthetic",
-        simple_train.windows,
-        simple_train.labels,
-        simple_val.windows,
-        simple_val.labels,
-        p=2,
-        r=32,
-        seq_len=args.window_size,
-        args=args,
-        device=device,
-    )
-    summary["experiments"]["transition_synthetic"] = run_experiment(
-        "transition_synthetic",
-        transition_train.windows,
-        transition_train.labels,
-        transition_val.windows,
-        transition_val.labels,
-        p=2,
-        r=32,
-        seq_len=args.window_size,
-        args=args,
-        device=device,
-    )
-    summary["experiments"]["cross_generator_simple_to_transition"] = run_experiment(
-        "cross_generator_simple_to_transition",
-        simple_train.windows,
-        simple_train.labels,
-        transition_val.windows,
-        transition_val.labels,
-        p=2,
-        r=32,
-        seq_len=args.window_size,
-        args=args,
-        device=device,
-    )
-    summary["experiments"]["cross_generator_transition_to_simple"] = run_experiment(
-        "cross_generator_transition_to_simple",
-        transition_train.windows,
-        transition_train.labels,
-        simple_val.windows,
-        simple_val.labels,
-        p=2,
-        r=32,
-        seq_len=args.window_size,
-        args=args,
-        device=device,
-    )
-    summary["experiments"]["realistic_proxy"] = run_experiment(
-        "realistic_proxy",
-        realistic_train.windows,
-        realistic_train.labels,
-        realistic_val.windows,
-        realistic_val.labels,
-        p=3,
-        r=8,
-        seq_len=args.realistic_window_size,
-        args=args,
-        device=device,
-    )
-    fill_takeaways(summary)
-
-    output_json.write_text(json.dumps(json_ready(summary), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    write_markdown(output_md, summary)
+    output_json.write_text(json.dumps(json_ready(payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_markdown(output_md, payload)
     print(f"\nWrote {output_json.relative_to(REPO_ROOT)}")
     print(f"Wrote {output_md.relative_to(REPO_ROOT)}")
 

@@ -8,18 +8,27 @@ The project still does not evaluate on a real BGP or production IP-traffic anoma
 
 The cross-generator rows are weak:
 
-- simple->transition: best AUROC is only `0.5400`
-- transition->simple: no structured variant beats `0.5000`
+- simple->transition: signed alpha is only `0.5016 +- 0.0257`
+- transition->simple: the best row is the flat digit baseline at `0.5148 +- 0.0467`
 
 That means the hierarchy signal is not yet generator-invariant.
 
+## Flat digit baseline is strong
+
+The new flat digit baseline narrows the interpretation:
+
+- simple synthetic: `0.5372 +- 0.0209`
+- realistic proxy: `0.7315 +- 0.0741`
+
+So the paper can no longer treat the gain as uniquely Hensel-derived. It has to separate general digit-structure benefit from specifically Hensel benefit.
+
 ## Explicit bias is not the stable win
 
-The old sigmoid gate underperforms on the realistic proxy (`0.6013`) and is not the best model in any transfer setting. Signed alpha helps mainly because it can shrink the explicit p-adic bias toward zero.
+The old sigmoid gate underperforms on average on the realistic proxy (`0.6926 +- 0.0488`) and is not the best model in any transfer setting. Signed alpha helps mainly because it can shrink the explicit p-adic bias toward zero.
 
 ## Signed alpha did not go strongly negative
 
-The most optimistic hypothesis was that the realistic proxy would drive alpha negative under hierarchy mismatch. It did not. Instead, alpha converged to approximately zero while the hierarchy diagnostics stayed negative. That is still informative, but weaker than a true learned reversal of the bias.
+The most optimistic hypothesis was that the realistic proxy would drive alpha negative under hierarchy mismatch. It did not. Instead, alpha converged to approximately zero (`-0.0010 +- 0.0001`) while the hierarchy diagnostics stayed negative. That is still informative, but weaker than a true learned reversal of the bias.
 
 ## CPU-only budget
 
