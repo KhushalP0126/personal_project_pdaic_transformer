@@ -14,6 +14,7 @@ if str(SRC_ROOT) not in sys.path:
 
 import torch
 
+from padic_transformer.report_paths import resolve_report_pair
 from padic_transformer.training import TrainConfig, train
 
 
@@ -89,6 +90,14 @@ def classify(history: list[dict], train_loss_gap: float = 0.10, val_loss_gap: fl
 def main() -> None:
     args = parse_args()
     device = resolve_device(args.device)
+    log_json, log_md = resolve_report_pair(
+        REPO_ROOT,
+        device,
+        args.log_json,
+        args.log_md,
+        default_json="results/over_underfit.json",
+        default_md="results/over_underfit.md",
+    )
     config = TrainConfig(
         p=args.p,
         r=args.r,
@@ -122,8 +131,8 @@ def main() -> None:
         margin_neg=args.margin_neg,
         max_pairs=args.max_pairs,
         checkpoint_dir=args.checkpoint_dir,
-        log_json=args.log_json,
-        log_md=args.log_md,
+        log_json=str(log_json.relative_to(REPO_ROOT)),
+        log_md=str(log_md.relative_to(REPO_ROOT)),
         save_every=args.save_every,
     )
     result = train(config, device)

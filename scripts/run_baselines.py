@@ -27,6 +27,7 @@ from padic_transformer.baselines_and_validation import (
 from padic_transformer.config import BenchmarkConfig
 from padic_transformer.dataset_hierarchy_rules import HierarchyRuleDataset, HierarchyRuleDatasetConfig
 from padic_transformer.dataset_realistic import RealisticBusDataset, RealisticDatasetConfig
+from padic_transformer.report_paths import resolve_report_json
 from padic_transformer.ultrametric import derive_seed, generate_clustered_hensel_dataset
 
 
@@ -79,20 +80,15 @@ def resolve_device(requested: str) -> torch.device:
         raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
     return torch.device(requested)
 
-
-def safe_results_path(raw_path: str) -> Path:
-    path = (REPO_ROOT / raw_path).resolve()
-    results_root = (REPO_ROOT / "results").resolve()
-    if results_root not in (path, *path.parents):
-        raise ValueError("outputs must be written under results/")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def main() -> None:
     args = parse_args()
     device = resolve_device(args.device)
-    out_path = safe_results_path(args.output_json)
+    out_path = resolve_report_json(
+        REPO_ROOT,
+        device,
+        args.output_json,
+        default_json="results/baseline_report.json",
+    )
 
     benchmark_cfg = BenchmarkConfig(
         p=args.p,

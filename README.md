@@ -528,6 +528,12 @@ make test
 make smoke
 ```
 
+For the harder CPU transition check:
+
+```bash
+make ip-transition-cpu
+```
+
 For the main GPU training path:
 
 ```bash
@@ -536,22 +542,35 @@ make train
 
 ## Make Targets
 
-### Core
+### CPU First
 
 - `make setup` creates `.venv` and installs the editable package.
 - `make test` runs the unit test suite.
-- `make cpu` runs the local CPU benchmark path, not training.
-- `make gpu` runs the CUDA benchmark path, not training.
 - `make smoke` runs the local CPU sanity-training path.
+- `make cpu` runs the local CPU benchmark path, not training.
+- `make cpu-all-1epoch` runs one CPU epoch across vanilla, PDAIC synthetic, hierarchy-rule, realistic, and baseline paths with progress output.
+- `make ip-cpu` runs the CPU IP-prefix synthetic experiment.
+- `make ip-transition-cpu` runs the harder transition-based CPU IP experiment.
+- `make ip-day4` runs the small CPU IP-prefix tuning pass.
+- `make ip-day5` runs the three-seed CPU IP-prefix validation.
+- `make ip-day5-fast` runs the smaller CPU Day 5 smoke pass.
 - `make clean` removes caches, checkpoints, and generated outputs.
 
-### Training
+Common CPU-facing scripts now alternate their default output slot between:
 
+- `results/report.json` / `results/report.md`
+- `results/report2.json` / `results/report2.md`
+
+That only applies when you keep the script defaults. If you pass explicit output
+paths, those are still honored.
+
+### GPU Second
+
+- `make gpu` runs the accelerator benchmark path, not training.
 - `make train` runs the recommended BCE-first GPU attention training path.
 - `make vanilla` runs the standard transformer GPU training path without PDAIC attention.
 - `make hierarchy` runs the hierarchy-rule attention training path.
 - `make realistic` runs the realistic idle-heavy attention training path.
-- `make cpu-all-1epoch` runs one CPU epoch across vanilla, PDAIC synthetic, hierarchy-rule, realistic, and baseline paths with progress output.
 
 ### Analysis
 
@@ -565,7 +584,6 @@ make train
 - `make threshold` runs the GPU training path with threshold tuning output.
 - `make diagnose` runs the learning-vs-overfit diagnostic.
 - `make audit` audits synthetic datasets for imbalance, leakage, train/validation overlap, and obvious artifacts.
-- `make ip-cpu` runs the CPU IP-prefix synthetic experiment and writes `results/ip_synthetic.json` plus `results/ip_synthetic.md`.
 
 ### Open Datasets
 

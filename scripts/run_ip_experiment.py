@@ -24,6 +24,7 @@ from padic_transformer.dataset_ip import IPPrefixAnomalyDataset, IPPrefixDataset
 from padic_transformer.metrics import binary_auroc
 from padic_transformer.model import PadicAnomalyDetector
 from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
+from padic_transformer.report_paths import resolve_report_pair
 from padic_transformer.ultrametric import derive_seed
 
 
@@ -80,16 +81,6 @@ def resolve_device(requested: str) -> torch.device:
     if requested == "mps" and not mps_available:
         raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
     return torch.device(requested)
-
-
-def safe_results_path(raw_path: str) -> Path:
-    path = (REPO_ROOT / raw_path).resolve()
-    results_root = (REPO_ROOT / "results").resolve()
-    if results_root not in (path, *path.parents):
-        raise ValueError("outputs must be written under results/")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
-
 
 def _scores_to_metrics(scores: torch.Tensor, labels: torch.Tensor) -> dict[str, float]:
     preds = (scores >= 0.0).to(torch.int64)
@@ -460,8 +451,14 @@ def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     device = resolve_device(args.device)
-    json_path = safe_results_path(args.output_json)
-    md_path = safe_results_path(args.output_md)
+    json_path, md_path = resolve_report_pair(
+        REPO_ROOT,
+        device,
+        args.output_json,
+        args.output_md,
+        default_json="results/ip_synthetic.json",
+        default_md="results/ip_synthetic.md",
+    )
 
     train_ds, val_ds = make_datasets(args)
     train_pos = float(train_ds.labels.mean().item())

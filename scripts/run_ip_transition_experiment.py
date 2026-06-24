@@ -23,6 +23,7 @@ from padic_transformer.dataset_ip_transition import (
     IPPrefixTransitionAnomalyDataset,
     IPPrefixTransitionDatasetConfig,
 )
+from padic_transformer.report_paths import resolve_report_pair
 from padic_transformer.ultrametric import derive_seed
 from run_ip_experiment import (  # noqa: E402
     MODEL_ORDER,
@@ -92,8 +93,14 @@ def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     device = resolve_device(args.device)
-    json_path = safe_results_path(args.output_json)
-    md_path = safe_results_path(args.output_md)
+    json_path, md_path = resolve_report_pair(
+        REPO_ROOT,
+        device,
+        args.output_json,
+        args.output_md,
+        default_json="results/ip_transition_synthetic.json",
+        default_md="results/ip_transition_synthetic.md",
+    )
 
     train_ds, val_ds = make_datasets(args)
     train_pos = float(train_ds.labels.mean().item())

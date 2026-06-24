@@ -11,8 +11,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from padic_transformer.report_paths import resolve_report_pair, safe_results_path
 
 MODEL_ORDER = (
     "logistic_regression",
@@ -54,18 +60,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def result_path(raw_path: str) -> Path:
-    path = (REPO_ROOT / raw_path).resolve()
-    results_root = (REPO_ROOT / "results").resolve()
-    if results_root not in (path, *path.parents):
-        raise ValueError("outputs must be written under results/")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
+def resolve_device(requested: str) -> torch.device:
+    mps_available = bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available()
+    if requested == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if mps_available:
+            return torch.device("mps")
+        return torch.device("cpu")
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+    if requested == "mps" and not mps_available:
+        raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
+    return torch.device(requested)
 
 
 def run_seed(args: argparse.Namespace, seed: int) -> dict[str, Any]:
-    json_path = result_path(f"results/ip_day5_seed_{seed}.json")
-    md_path = result_path(f"results/ip_day5_seed_{seed}.md")
+    json_path = safe_results_path(REPO_ROOT, f"results/ip_day5_seed_{seed}.json")
+    md_path = safe_results_path(REPO_ROOT, f"results/ip_day5_seed_{seed}.md")
     command = [
         sys.executable,
         str(REPO_ROOT / "scripts" / "run_ip_experiment.py"),
@@ -277,10 +289,17 @@ def write_markdown(path: Path, runs: list[dict[str, Any]], summary: dict[str, An
 
 def main() -> None:
     args = parse_args()
+    device = resolve_device(args.device)
     runs = [run_seed(args, seed) for seed in args.seeds]
     summary = summarize(runs)
-    output_json = result_path(args.output_json)
-    output_md = result_path(args.output_md)
+    output_json, output_md = resolve_report_pair(
+        REPO_ROOT,
+        device,
+        args.output_json,
+        args.output_md,
+        default_json="results/ip_day5_multiseed.json",
+        default_md="results/ip_day5_multiseed.md",
+    )
     payload = {
         "config": {
             "seeds": args.seeds,

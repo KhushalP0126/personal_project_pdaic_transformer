@@ -28,16 +28,8 @@ from padic_transformer.hensel import int64_to_digits
 from padic_transformer.metrics import binary_auroc
 from padic_transformer.model import PadicAnomalyDetector
 from padic_transformer.model_fixes import StreamingWindowScorer, quantize_dynamic_model
+from padic_transformer.report_paths import resolve_report_pair
 from padic_transformer.ultrametric import ultrametric_violation_rate
-
-
-def safe_results_path(raw_path: str) -> Path:
-    path = (REPO / raw_path).resolve()
-    results_root = (REPO / "results").resolve()
-    if results_root not in (path, *path.parents):
-        raise ValueError("outputs must be written under results/")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def download_beth(data_dir: Path) -> Path:
@@ -410,6 +402,7 @@ def _write_markdown(path: Path, dataset: str, stats: dict[str, object], um: dict
 def main() -> None:
     args = parse_args()
     data_dir = Path(args.data_dir)
+    device = resolve_device(args.device)
 
     try:
         if not args.no_download:
@@ -427,8 +420,14 @@ def main() -> None:
 
     um_results = check_ultrametric(windows, labels, n_triplets=args.triplets)
 
-    out_json = safe_results_path("results/open_dataset_report.json")
-    out_md = safe_results_path("results/open_dataset_report.md")
+    out_json, out_md = resolve_report_pair(
+        REPO,
+        device,
+        "results/open_dataset_report.json",
+        "results/open_dataset_report.md",
+        default_json="results/open_dataset_report.json",
+        default_md="results/open_dataset_report.md",
+    )
     results: dict[str, object] | None = None
     if not args.stats_only:
         seed_runs: list[dict[str, object]] = []
@@ -448,7 +447,7 @@ def main() -> None:
                     n_layers=args.n_layers,
                     epochs=args.epochs,
                     batch_size=args.batch_size,
-                    device_str=args.device,
+                    device_str=str(device),
                     quantize_int8=args.quantize_int8,
                     seed=seed,
                 )
