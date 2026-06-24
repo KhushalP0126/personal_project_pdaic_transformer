@@ -70,49 +70,29 @@ The important result is that signed alpha mostly improves robustness by letting 
 
 ### Environment setup
 
-Use Python 3.10 or newer. The project is installable as an editable package, and
-`requirements.txt` pins the runtime versions used for the checked-in result
-files.
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pip install -e .
-```
-
-The Makefile runs the same setup through:
-
 ```bash
 make setup
 ```
 
 ### Sanity checks
 
-Run the unit tests before comparing results:
+Run the repo checks before comparing results:
 
 ```bash
 make test
+make check-study
 ```
 
-The fast CPU smoke path is:
+If the repo is already set up and you want to avoid any reinstall step:
 
 ```bash
-make smoke
+make test-unit
 ```
 
 ### Reproduce the current characterization study
 
-The main CPU study command is:
-
 ```bash
 make ip-study-cpu
-```
-
-Direct runner:
-
-```bash
-.venv/bin/python scripts/run_ip_characterization_study.py --device cpu
 ```
 
 This writes:
@@ -168,46 +148,9 @@ Not supported:
 - the method generalizes to real traffic
 - routing efficiency improvement
 
-### Reproduce the earlier IP-prefix results
+### Historical Day 5 path
 
-Day 3 first useful IP-prefix run:
-
-```bash
-.venv/bin/python scripts/run_ip_experiment.py \
-  --device cpu \
-  --train-samples 2048 \
-  --val-samples 512 \
-  --window-size 16 \
-  --prefix-len 24 \
-  --num-prefixes 32 \
-  --attack-fraction 0.30 \
-  --attack-min-len 1 \
-  --attack-max-len 4 \
-  --epochs 1 \
-  --batch-size 128 \
-  --lr 3e-4 \
-  --d-model 64 \
-  --n-heads 4 \
-  --n-layers 1 \
-  --d-digit 8 \
-  --output-json results/ip_day3_first.json \
-  --output-md results/ip_day3_first.md
-```
-
-Day 4 small CPU tuning sweep:
-
-```bash
-make ip-day4
-```
-
-The aggregate Day 4 report is written to:
-
-```text
-results/ip_day4_tuning.json
-results/ip_day4_tuning.md
-```
-
-Day 5 multi-seed validation for the best Day 4 config:
+If you want the older three-seed IP-prefix validation path rather than the current study:
 
 ```bash
 make ip-day5
@@ -224,21 +167,6 @@ The aggregate Day 5 report is written to:
 ```text
 results/ip_day5_multiseed.json
 results/ip_day5_multiseed.md
-```
-
-### Old gate ablation
-
-The IP experiment runner now exposes fixed and learned gate variants directly:
-
-```bash
-# fixed gate ablations
-.venv/bin/python scripts/run_ip_experiment.py --device cpu --fixed-padic-gate 0.0 ...
-.venv/bin/python scripts/run_ip_experiment.py --device cpu --fixed-padic-gate 0.25 ...
-.venv/bin/python scripts/run_ip_experiment.py --device cpu --fixed-padic-gate 0.5 ...
-.venv/bin/python scripts/run_ip_experiment.py --device cpu --fixed-padic-gate 1.0 ...
-
-# learned gate without the 0.5 pullback
-.venv/bin/python scripts/run_ip_experiment.py --device cpu --gate-regularization-weight 0.0 ...
 ```
 
 ### Train and evaluate the Hensel hierarchy model
@@ -261,84 +189,6 @@ Evaluate a trained checkpoint against hierarchy controls:
 make eval
 ```
 
-### Temperature initialization ablation
-
-Soft p-adic valuation now uses flat temperature initialization by default. The
-older prime-gap prior is opt-in so it must be ablated explicitly:
-
-```bash
-# Flat default
-.venv/bin/python scripts/train_anomaly_detector.py \
-  --attention \
-  --device cpu \
-  --p 3 \
-  --r 8 \
-  --d-model 64 \
-  --n-heads 4 \
-  --n-layers 2 \
-  --ffn-dim 256 \
-  --head-hidden 32 \
-  --dropout 0.1 \
-  --d-digit 8 \
-  --window-size 16 \
-  --attack-fraction 0.3 \
-  --attack-min-len 2 \
-  --attack-max-len 4 \
-  --n-train 4096 \
-  --n-val 512 \
-  --samples 4096 \
-  --classes 16 \
-  --tokens-per-class 64 \
-  --epochs 15 \
-  --batch-size 64 \
-  --lr 3e-4 \
-  --warmup-epochs 2 \
-  --num-workers 0 \
-  --alpha 0.0 \
-  --temperature-decay 0.0 \
-  --save-every 999 \
-  --checkpoint-dir results/temp_flat_checkpoints \
-  --log-json results/temp_flat.json \
-  --log-md results/temp_flat.md
-
-# Prime-gap prior
-.venv/bin/python scripts/train_anomaly_detector.py \
-  --attention \
-  --device cpu \
-  --p 3 \
-  --r 8 \
-  --d-model 64 \
-  --n-heads 4 \
-  --n-layers 2 \
-  --ffn-dim 256 \
-  --head-hidden 32 \
-  --dropout 0.1 \
-  --d-digit 8 \
-  --window-size 16 \
-  --attack-fraction 0.3 \
-  --attack-min-len 2 \
-  --attack-max-len 4 \
-  --n-train 4096 \
-  --n-val 512 \
-  --samples 4096 \
-  --classes 16 \
-  --tokens-per-class 64 \
-  --epochs 15 \
-  --batch-size 64 \
-  --lr 3e-4 \
-  --warmup-epochs 2 \
-  --num-workers 0 \
-  --alpha 0.0 \
-  --temperature-decay 0.05 \
-  --save-every 999 \
-  --checkpoint-dir results/temp_prime_gap_checkpoints \
-  --log-json results/temp_prime_gap.json \
-  --log-md results/temp_prime_gap.md
-```
-
-Do not cite the prime-gap prior as evidence unless it beats the flat run under
-the same seed and training budget.
-
 What is already in place:
 
 - IPv4-to-32-bit binary digit pipeline with MSB-first prefix semantics
@@ -352,114 +202,18 @@ What is already in place:
 - hierarchy-rule training dataset
 - baseline suite with true, shuffled, and random hierarchy controls
 
-What remains open:
+## Current Result Read
 
-- stronger evidence on real traffic or BETH-style data
-- more seeds or confidence intervals for the vanilla comparison
-- a cleaner explanation for why the learned gate stays near `0.5`
-- a stronger causal story for when the p-adic branch helps versus hurts
-- a tighter paper narrative
+The current repo result should be read from `results/final_summary.md` and
+`results/final_summary_by_seed.md`.
 
-## Current Evidence From Results
+The safe summary is:
 
-The current synthetic IP-prefix results support a modest claim:
-
-```text
-true 2-adic attention consistently beats shuffled/random hierarchy controls,
-but the margin over a vanilla transformer is still unstable.
-```
-
-That is enough for a workshop-style synthetic result, but it is not yet enough
-for a strong general claim about p-adic attention.
-
-### IP-prefix Day 3 result
-
-`results/ip_day3_first.json` is the first useful result for the IP-prefix paper direction. The experiment uses `p=2`, `r=32`, `/24` prefixes, 2048 train windows, 512 validation windows, one seed, and one CPU epoch.
-
-| Model | AUROC | F1 |
-|---|---:|---:|
-| logistic_regression | 0.5503 | 0.4140 |
-| isolation_forest | 0.5452 | 0.4602 |
-| vanilla_transformer | 0.4680 | 0.2716 |
-| padic_attention_true | 0.5750 | 0.4715 |
-| padic_attention_shuffled | 0.4656 | 0.2283 |
-| padic_attention_random | 0.4657 | 0.4602 |
-
-This is a green light to continue the IP-prefix experiment. The important ordering is:
-
-```text
-true 2-adic > vanilla
-true 2-adic > shuffled
-true 2-adic > random
-```
-
-That suggests the real IP-prefix hierarchy is contributing useful signal. When the hierarchy is destroyed by shuffled or random remaps, AUROC falls back near the vanilla transformer.
-
-The result is only a green light. It is one seed and one epoch, so it does not
-carry the paper by itself.
-
-### IP-prefix Day 4 tuning result
-
-`results/ip_day4_tuning.json` picks the best small CPU configuration for Day 5:
-
-| Config | True AUROC | Vanilla AUROC | Shuffled AUROC | Random AUROC | True - Best Control |
-|---|---:|---:|---:|---:|---:|
-| `epochs3_w16_d64_l1_drop01` | 0.6559 | 0.5339 | 0.5111 | 0.5352 | 0.1207 |
-
-This is the strongest single-seed configuration found in the CPU tuning pass,
-and it became the fixed Day 5 candidate.
-
-### IP-prefix Day 5 multi-seed result
-
-`results/ip_day5_multiseed.json` is the paper-critical synthetic result for the
-current repo direction:
-
-| Comparison | Result |
-|---|---:|
-| True 2-adic beats vanilla | `2/3` seeds |
-| True 2-adic beats best shuffled/random control | `3/3` seeds |
-| Mean true - vanilla AUROC gap | `+0.0317 ± 0.0823` |
-| Mean true - best control AUROC gap | `+0.0695 ± 0.0467` |
-
-The promising part is the control story: true 2-adic wins against shuffled or
-random hierarchy in every seed. The weaker part is the vanilla comparison:
-there is still one seed where vanilla wins, and the standard deviation on the
-true-minus-vanilla gap is large.
-
-### Gate ablation result
-
-The gate is not broken. It is behaving like the code encourages: it starts at
-`sigmoid(0.0) = 0.5`, and the default regularizer pulls it back toward `0.5`.
-That means a gate near `0.5` is not evidence that the p-adic branch is unused.
-
-The useful ablation is whether performance drops when the gate is fixed to
-`0.0`. On the Day 5 setup, it does not. In fact, the strongest of the quick
-ablations was:
-
-| Variant | Mean true - vanilla | Mean true - best control |
-|---|---:|---:|
-| `fixed_gate_0` | `+0.0532` | `+0.0907` |
-| `fixed_gate_025` | `+0.0407` | `+0.0783` |
-| `fixed_gate_05` | `+0.0317` | `+0.0695` |
-| `fixed_gate_1` | `+0.0255` | `+0.0638` |
-| `learned_no_reg` | `+0.0317` | `+0.0695` |
-
-The immediate conclusion is narrow but important: on this synthetic Day 5
-budget, the hierarchy-control advantage is real, but the learned gate itself is
-not the source of the gain. Forcing the gate to `0.0` performed best, while
-removing the gate regularizer did not materially move the learned gate off its
-`~0.5` baseline.
-
-### Practical read on the evidence
-
-1. The synthetic IP-prefix claim is strongest when phrased as a hierarchy
-   control result: true 2-adic beats shuffled/random consistently.
-2. The repo does not yet have a stable claim that true 2-adic reliably beats a
-   vanilla transformer across seeds.
-3. The gate ablation weakens any argument that the current learned gate is the
-   mechanism behind the improvement.
-4. The next serious step is real-data validation or a stronger causal ablation,
-   not another broad synthetic sweep.
+- structured digit features help on the simple aligned synthetic IP task
+- signed alpha is better than the old positive-only gate there
+- the signed-alpha model does that while keeping `alpha` near zero
+- transition and generator-shift rows are weak
+- realistic-proxy results favor the non-p-adic baselines on average
 
 ## What This Repo Is Testing
 
@@ -606,13 +360,12 @@ IP routing is no longer just a pivot; it is the current paper path. IP addresses
 
 ## Recommended Experiment Order
 
-1. Use `make ip-cpu` as the reproducibility command for the IP-prefix experiment.
-2. Use `make ip-day4` only when you need to re-run the small CPU tuning sweep.
-3. Use `make ip-day5` for the three-seed synthetic validation table.
-4. Use `--fixed-padic-gate` and `--gate-regularization-weight` for causal gate ablations before changing model internals again.
-5. Save attention diagnostics for every final run: `padic_attention_corr`, `hierarchy_gap`, `same_prefix_attention`, `diff_prefix_attention`, and `padic_gate`.
-6. Treat `true >> shuffled/random` as the primary synthetic success condition; treat `true > vanilla` as desirable but not yet stable.
-7. After the synthetic IP table is stable, validate on BETH or a real IP/network-traffic dataset.
+1. Use `make ip-study-cpu` as the primary reproducibility command.
+2. Use `make ip-transition-cpu` if you want the harder transition-only slice by itself.
+3. Use `make ip-day5` only if you need the older historical multiseed path.
+4. Save attention diagnostics for every final run: `padic_alpha`, `padic_attention_corr`, `hierarchy_gap`, `content_logit_std`, and `padic_logit_std`.
+5. Treat the simple-task win as the current positive result and treat transfer/realistic rows as the main limitation.
+6. After the controlled study is stable, validate on BETH or a real IP/network-traffic dataset.
 
 ## Quick Start
 
@@ -645,9 +398,11 @@ make train
 - `make cpu-all-1epoch` runs one CPU epoch across vanilla, PDAIC synthetic, hierarchy-rule, realistic, and baseline paths with progress output.
 - `make ip-cpu` runs the CPU IP-prefix synthetic experiment.
 - `make ip-transition-cpu` runs the harder transition-based CPU IP experiment.
-- `make ip-day4` runs the small CPU IP-prefix tuning pass.
+- `make ip-study-cpu` runs the multi-seed characterization study and writes `final_summary`.
 - `make ip-day5` runs the three-seed CPU IP-prefix validation.
 - `make ip-day5-fast` runs the smaller CPU Day 5 smoke pass.
+- `make test-unit` runs the unit tests without re-entering package setup.
+- `make check-study` compile-checks the characterization study runner.
 - `make clean` removes caches, checkpoints, and generated outputs.
 
 Common CPU-facing scripts now alternate their default output slot between:

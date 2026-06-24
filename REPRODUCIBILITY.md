@@ -3,37 +3,27 @@
 ## Environment
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pip install -e .
+make setup
 ```
 
 ## Validation
 
 ```bash
 make test
+make check-study
 ```
 
-Targeted study checks:
+If you are already set up and want the offline-safe test path without a reinstall
+step:
 
 ```bash
-.venv/bin/python -m unittest tests.test_padic_attention tests.test_training_pipeline
-.venv/bin/python -m py_compile scripts/run_ip_characterization_study.py
+make test-unit
 ```
 
 ## Main study
 
 ```bash
 make ip-study-cpu
-```
-
-Equivalent direct command:
-
-```bash
-.venv/bin/python scripts/run_ip_characterization_study.py \
-  --device cpu \
-  --seeds 20260504 20260505 20260506
 ```
 
 Outputs:
