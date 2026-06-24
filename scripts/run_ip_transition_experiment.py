@@ -31,10 +31,10 @@ from run_ip_experiment import (  # noqa: E402
     json_ready,
     resolve_device,
     run_isolation_forest,
+    run_standard,
+    run_hensel_only,
     run_padic_variant,
     run_step,
-    run_vanilla,
-    safe_results_path,
     write_markdown,
 )
 
@@ -60,7 +60,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--gate-init-logit", type=float, default=0.0)
     parser.add_argument("--gate-regularization-weight", type=float, default=0.001)
+    parser.add_argument("--padic-bias-mode", choices=["none", "sigmoid", "signed_alpha"], default="sigmoid")
+    parser.add_argument("--padic-alpha-max", type=float, default=1.0)
     parser.add_argument("--fixed-padic-gate", type=float, default=None)
+    parser.add_argument("--fixed-padic-alpha", type=float, default=None)
     parser.add_argument("--output-json", default="results/ip_transition_synthetic.json")
     parser.add_argument("--output-md", default="results/ip_transition_synthetic.md")
     return parser.parse_args()
@@ -141,29 +144,41 @@ def main() -> None:
             contamination=args.attack_fraction,
         ),
     )
-    models["vanilla_transformer"] = run_step(
-        "vanilla_transformer",
+    models["standard_transformer"] = run_step(
+        "standard_transformer",
         3,
         total,
-        lambda: run_vanilla(args, train_ds, val_ds, pos_weight, device),
+        lambda: run_standard(args, train_ds, val_ds, pos_weight, device),
     )
-    models["padic_attention_true"] = run_step(
-        "padic_attention_true",
+    models["hensel_only"] = run_step(
+        "hensel_only",
         4,
         total,
-        lambda: run_padic_variant("true", args, train_ds, val_ds, pos_weight, device),
+        lambda: run_hensel_only(args, train_ds, val_ds, pos_weight, device),
     )
-    models["padic_attention_shuffled"] = run_step(
-        "padic_attention_shuffled",
+    models["hensel_padic_sigmoid_true"] = run_step(
+        "hensel_padic_sigmoid_true",
         5,
         total,
-        lambda: run_padic_variant("shuffled", args, train_ds, val_ds, pos_weight, device),
+        lambda: run_padic_variant("true", args, train_ds, val_ds, pos_weight, device, padic_bias_mode="sigmoid"),
     )
-    models["padic_attention_random"] = run_step(
-        "padic_attention_random",
+    models["hensel_padic_sigmoid_shuffled"] = run_step(
+        "hensel_padic_sigmoid_shuffled",
         6,
         total,
-        lambda: run_padic_variant("random", args, train_ds, val_ds, pos_weight, device),
+        lambda: run_padic_variant("shuffled", args, train_ds, val_ds, pos_weight, device, padic_bias_mode="sigmoid"),
+    )
+    models["hensel_padic_sigmoid_random"] = run_step(
+        "hensel_padic_sigmoid_random",
+        7,
+        total,
+        lambda: run_padic_variant("random", args, train_ds, val_ds, pos_weight, device, padic_bias_mode="sigmoid"),
+    )
+    models["hensel_padic_signed_alpha_true"] = run_step(
+        "hensel_padic_signed_alpha_true",
+        8,
+        total,
+        lambda: run_padic_variant("true", args, train_ds, val_ds, pos_weight, device, padic_bias_mode="signed_alpha"),
     )
 
     report = {
@@ -182,9 +197,11 @@ def main() -> None:
             "n_heads": args.n_heads,
             "n_layers": args.n_layers,
             "d_digit": args.d_digit,
+            "padic_alpha_max": args.padic_alpha_max,
             "gate_init_logit": args.gate_init_logit,
             "gate_regularization_weight": args.gate_regularization_weight,
             "fixed_padic_gate": args.fixed_padic_gate,
+            "fixed_padic_alpha": args.fixed_padic_alpha,
         },
         "data_split": {
             "train_seed": args.seed,
@@ -207,6 +224,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    # Make lints happy: imported for parity with run_ip_experiment controls.
     _ = apply_ip_hierarchy_variant
     main()

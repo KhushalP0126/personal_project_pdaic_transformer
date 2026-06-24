@@ -166,25 +166,31 @@ def summarize_report(
     md_path: Path,
 ) -> dict[str, Any]:
     models = report["models"]
-    true = models["padic_attention_true"]
-    shuffled = models["padic_attention_shuffled"]
-    random = models["padic_attention_random"]
-    vanilla = models["vanilla_transformer"]
+    standard = models["standard_transformer"]
+    hensel_only = models["hensel_only"]
+    true = models["hensel_padic_sigmoid_true"]
+    shuffled = models["hensel_padic_sigmoid_shuffled"]
+    random = models["hensel_padic_sigmoid_random"]
+    signed_alpha = models["hensel_padic_signed_alpha_true"]
     return {
         "name": cfg["name"],
         "config": cfg,
         "json": str(json_path.relative_to(REPO_ROOT)),
         "markdown": str(md_path.relative_to(REPO_ROOT)),
+        "standard_auroc": standard["auroc"],
+        "hensel_only_auroc": hensel_only["auroc"],
         "true_auroc": true["auroc"],
+        "signed_alpha_auroc": signed_alpha["auroc"],
         "true_f1": true["f1"],
-        "vanilla_auroc": vanilla["auroc"],
         "shuffled_auroc": shuffled["auroc"],
         "random_auroc": random["auroc"],
-        "true_minus_vanilla": true["auroc"] - vanilla["auroc"],
+        "true_minus_hensel_only": true["auroc"] - hensel_only["auroc"],
         "true_minus_best_control": true["auroc"] - max(shuffled["auroc"], random["auroc"]),
-        "padic_gate": true.get("padic_gate"),
+        "signed_alpha_minus_hensel_only": signed_alpha["auroc"] - hensel_only["auroc"],
+        "padic_alpha": true.get("padic_alpha"),
         "padic_attention_corr": true.get("padic_attention_corr"),
         "hierarchy_gap": true.get("hierarchy_gap"),
+        "padic_alpha_grad_norm": true.get("padic_alpha_grad_norm"),
         "train_time_s": true.get("train_time_s"),
     }
 
@@ -193,15 +199,16 @@ def write_markdown(path: Path, summaries: list[dict[str, Any]]) -> None:
     lines = [
         "# IP Day 4 Tuning",
         "",
-        "| Config | True AUROC | Vanilla | Shuffled | Random | True - Vanilla | True - Best Control | Gate | Seconds |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Config | Standard | Hensel-only | Old gate true | Signed alpha | Shuffled | Random | Old-Hensel | Old-BestCtrl | Alpha | Alpha grad | Seconds |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in summaries:
         lines.append(
-            f"| {row['name']} | {row['true_auroc']:.4f} | {row['vanilla_auroc']:.4f} | "
+            f"| {row['name']} | {row['standard_auroc']:.4f} | {row['hensel_only_auroc']:.4f} | "
+            f"{row['true_auroc']:.4f} | {row['signed_alpha_auroc']:.4f} | "
             f"{row['shuffled_auroc']:.4f} | {row['random_auroc']:.4f} | "
-            f"{row['true_minus_vanilla']:.4f} | {row['true_minus_best_control']:.4f} | "
-            f"{row['padic_gate']:.4f} | {row['train_time_s']:.2f} |"
+            f"{row['true_minus_hensel_only']:.4f} | {row['true_minus_best_control']:.4f} | "
+            f"{row['padic_alpha']:.4f} | {row['padic_alpha_grad_norm']:.4f} | {row['train_time_s']:.2f} |"
         )
     best = max(summaries, key=lambda row: row["true_auroc"])
     best_clean = max(summaries, key=lambda row: row["true_minus_best_control"])
@@ -210,10 +217,10 @@ def write_markdown(path: Path, summaries: list[dict[str, Any]]) -> None:
             "",
             "## Selection",
             "",
-            f"- Best true PDAIC AUROC: `{best['name']}` at `{best['true_auroc']:.4f}`.",
-            f"- Best hierarchy-control gap: `{best_clean['name']}` at `{best_clean['true_minus_best_control']:.4f}`.",
+            f"- Best old-gate AUROC: `{best['name']}` at `{best['true_auroc']:.4f}`.",
+            f"- Best old-gate hierarchy-control gap: `{best_clean['name']}` at `{best_clean['true_minus_best_control']:.4f}`.",
             "",
-            "Use the AUROC winner only if it still beats shuffled/random. Otherwise prefer the clean-control-gap winner for Day 5.",
+            "Use the configuration that keeps the old-gate result above shuffled/random before comparing against hensel_only and signed alpha.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

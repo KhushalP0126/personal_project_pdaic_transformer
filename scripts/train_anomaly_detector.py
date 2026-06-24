@@ -71,7 +71,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--d-digit", type=int, default=16, help="Per-digit embedding width for soft attention")
     parser.add_argument("--gate-init-logit", type=float, default=0.0)
     parser.add_argument("--gate-regularization-weight", type=float, default=0.001)
+    parser.add_argument("--padic-bias-mode", choices=["none", "sigmoid", "signed_alpha"], default="sigmoid")
+    parser.add_argument("--padic-alpha-max", type=float, default=1.0)
     parser.add_argument("--fixed-padic-gate", type=float, default=None)
+    parser.add_argument("--fixed-padic-alpha", type=float, default=None)
     parser.add_argument(
         "--temperature-decay",
         type=float,
@@ -125,7 +128,10 @@ def main() -> None:
         temperature_decay=args.temperature_decay,
         gate_init_logit=args.gate_init_logit,
         gate_regularization_weight=args.gate_regularization_weight,
+        padic_bias_mode=args.padic_bias_mode,
+        padic_alpha_max=args.padic_alpha_max,
         fixed_padic_gate=args.fixed_padic_gate,
+        fixed_padic_alpha=args.fixed_padic_alpha,
         dropout=args.dropout,
         window_size=args.window_size,
         attack_fraction=args.attack_fraction,
@@ -183,7 +189,10 @@ def main() -> None:
                 temperature_decay=cfg.temperature_decay,
                 gate_init_logit=cfg.gate_init_logit,
                 gate_regularization_weight=cfg.gate_regularization_weight,
+                padic_bias_mode=cfg.padic_bias_mode,
+                padic_alpha_max=cfg.padic_alpha_max,
                 fixed_padic_gate=cfg.fixed_padic_gate,
+                fixed_padic_alpha=cfg.fixed_padic_alpha,
             )
 
         train(config, device, model_factory=factory)

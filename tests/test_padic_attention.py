@@ -90,6 +90,20 @@ class TestSoftPadicValuation(unittest.TestCase):
 
 
 class TestPadicAttentionHead(unittest.TestCase):
+    @staticmethod
+    def _structured_digits() -> torch.Tensor:
+        return torch.tensor(
+            [
+                [
+                    [0, 0, 0, 0],
+                    [0, 0, 0, 1],
+                    [0, 0, 1, 0],
+                    [1, 1, 1, 1],
+                ]
+            ],
+            dtype=torch.int64,
+        )
+
     def test_output_shape(self) -> None:
         head = PadicAttentionHead(p=3, r=8, d_model=32, d_head=16, d_digit=8)
         digits = torch.randint(0, 3, (2, 5, 8))
@@ -129,10 +143,18 @@ class TestPadicAttentionHead(unittest.TestCase):
             "attn_gap_depth2",
             "attn_gap_depth4",
             "padic_gate",
+            "padic_alpha",
+            "raw_padic_alpha",
+            "content_logit_std",
+            "padic_logit_std",
         ):
             self.assertIn(key, metrics)
         gate = float(metrics["padic_gate"].item())
         self.assertAlmostEqual(gate, 0.5, places=6)
+        self.assertAlmostEqual(float(metrics["padic_alpha"].item()), 0.5, places=6)
+        self.assertAlmostEqual(float(metrics["raw_padic_alpha"].item()), 0.0, places=6)
+        self.assertGreaterEqual(float(metrics["content_logit_std"].item()), 0.0)
+        self.assertGreaterEqual(float(metrics["padic_logit_std"].item()), 0.0)
 
     def test_fixed_padic_gate_is_reported_in_metrics(self) -> None:
         head = PadicAttentionHead(
@@ -147,6 +169,7 @@ class TestPadicAttentionHead(unittest.TestCase):
         x = torch.randn(2, 5, 32)
         _, _, metrics = head(digits, x, return_metrics=True)
         self.assertAlmostEqual(float(metrics["padic_gate"].item()), 0.25, places=6)
+        self.assertAlmostEqual(float(metrics["padic_alpha"].item()), 0.25, places=6)
 
     def test_fixed_padic_gate_disables_gate_regularization(self) -> None:
         head = PadicAttentionHead(
@@ -158,6 +181,73 @@ class TestPadicAttentionHead(unittest.TestCase):
             fixed_padic_gate=1.0,
         )
         self.assertEqual(float(head.gate_regularization_loss().item()), 0.0)
+
+    def test_fixed_alpha_zero_matches_hensel_only_attention(self) -> None:
+        digits = self._structured_digits()
+        x = torch.zeros(1, 4, 16)
+
+        no_bias = PadicAttentionHead(
+            p=2,
+            r=4,
+            d_model=16,
+            d_head=8,
+            d_digit=4,
+            padic_bias_mode="none",
+        )
+        zero_alpha = PadicAttentionHead(
+            p=2,
+            r=4,
+            d_model=16,
+            d_head=8,
+            d_digit=4,
+            padic_bias_mode="signed_alpha",
+            fixed_padic_alpha=0.0,
+        )
+        zero_alpha.load_state_dict(no_bias.state_dict(), strict=False)
+        no_bias.eval()
+        zero_alpha.eval()
+
+        no_bias_out, no_bias_weights, _ = no_bias(digits, x, return_metrics=True)
+        zero_alpha_out, zero_alpha_weights, zero_alpha_metrics = zero_alpha(digits, x, return_metrics=True)
+
+        torch.testing.assert_close(no_bias_out, zero_alpha_out, atol=1e-6, rtol=0.0)
+        torch.testing.assert_close(no_bias_weights, zero_alpha_weights, atol=1e-6, rtol=0.0)
+        self.assertAlmostEqual(float(zero_alpha_metrics["padic_alpha"].item()), 0.0, places=6)
+
+    def test_signed_alpha_changes_attention_direction(self) -> None:
+        digits = self._structured_digits()
+        x = torch.zeros(1, 4, 16)
+
+        positive = PadicAttentionHead(
+            p=2,
+            r=4,
+            d_model=16,
+            d_head=8,
+            d_digit=4,
+            padic_bias_mode="signed_alpha",
+            fixed_padic_alpha=1.0,
+        )
+        negative = PadicAttentionHead(
+            p=2,
+            r=4,
+            d_model=16,
+            d_head=8,
+            d_digit=4,
+            padic_bias_mode="signed_alpha",
+            fixed_padic_alpha=-1.0,
+        )
+        negative.load_state_dict(positive.state_dict(), strict=False)
+        positive.eval()
+        negative.eval()
+
+        _, pos_weights, pos_metrics = positive(digits, x, return_metrics=True)
+        _, neg_weights, neg_metrics = negative(digits, x, return_metrics=True)
+
+        self.assertFalse(torch.allclose(pos_weights, neg_weights))
+        self.assertGreater(float(pos_metrics["hierarchy_gap"].item()), 0.0)
+        self.assertLess(float(neg_metrics["hierarchy_gap"].item()), 0.0)
+        self.assertAlmostEqual(float(pos_metrics["padic_alpha"].item()), 1.0, places=6)
+        self.assertAlmostEqual(float(neg_metrics["padic_alpha"].item()), -1.0, places=6)
 
     def test_zero_gate_regularization_weight_disables_penalty(self) -> None:
         head = PadicAttentionHead(
@@ -298,6 +388,10 @@ class TestPadicAttentionAnomalyDetector(unittest.TestCase):
             "attn_gap_depth2",
             "attn_gap_depth4",
             "padic_gate",
+            "padic_alpha",
+            "raw_padic_alpha",
+            "content_logit_std",
+            "padic_logit_std",
         ):
             self.assertIn(key, metrics)
         sparsity = float(metrics["attention_sparsity"].item())

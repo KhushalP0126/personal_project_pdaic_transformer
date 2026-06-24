@@ -23,10 +23,12 @@ from padic_transformer.report_paths import resolve_report_pair, safe_results_pat
 MODEL_ORDER = (
     "logistic_regression",
     "isolation_forest",
-    "vanilla_transformer",
-    "padic_attention_true",
-    "padic_attention_shuffled",
-    "padic_attention_random",
+    "standard_transformer",
+    "hensel_only",
+    "hensel_padic_sigmoid_true",
+    "hensel_padic_sigmoid_shuffled",
+    "hensel_padic_sigmoid_random",
+    "hensel_padic_signed_alpha_true",
 )
 
 METRICS = ("auroc", "f1", "precision", "recall", "accuracy")
@@ -163,24 +165,31 @@ def summarize(runs: list[dict[str, Any]]) -> dict[str, Any]:
                     values.append(float(model_metrics[metric]))
             summary["models"][model_name][metric] = mean_std(values)
 
-    true_aurocs = [float(run["report"]["models"]["padic_attention_true"]["auroc"]) for run in runs]
-    vanilla_aurocs = [float(run["report"]["models"]["vanilla_transformer"]["auroc"]) for run in runs]
-    shuffled_aurocs = [float(run["report"]["models"]["padic_attention_shuffled"]["auroc"]) for run in runs]
-    random_aurocs = [float(run["report"]["models"]["padic_attention_random"]["auroc"]) for run in runs]
+    true_aurocs = [float(run["report"]["models"]["hensel_padic_sigmoid_true"]["auroc"]) for run in runs]
+    standard_aurocs = [float(run["report"]["models"]["standard_transformer"]["auroc"]) for run in runs]
+    hensel_only_aurocs = [float(run["report"]["models"]["hensel_only"]["auroc"]) for run in runs]
+    shuffled_aurocs = [float(run["report"]["models"]["hensel_padic_sigmoid_shuffled"]["auroc"]) for run in runs]
+    random_aurocs = [float(run["report"]["models"]["hensel_padic_sigmoid_random"]["auroc"]) for run in runs]
+    signed_alpha_aurocs = [float(run["report"]["models"]["hensel_padic_signed_alpha_true"]["auroc"]) for run in runs]
 
-    true_minus_vanilla = [t - v for t, v in zip(true_aurocs, vanilla_aurocs)]
+    true_minus_standard = [t - v for t, v in zip(true_aurocs, standard_aurocs)]
+    true_minus_hensel_only = [t - v for t, v in zip(true_aurocs, hensel_only_aurocs)]
     true_minus_shuffled = [t - s for t, s in zip(true_aurocs, shuffled_aurocs)]
     true_minus_random = [t - r for t, r in zip(true_aurocs, random_aurocs)]
     true_minus_best_control = [
         t - max(s, r) for t, s, r in zip(true_aurocs, shuffled_aurocs, random_aurocs)
     ]
+    signed_alpha_minus_hensel_only = [t - v for t, v in zip(signed_alpha_aurocs, hensel_only_aurocs)]
 
     summary["gaps"] = {
-        "true_minus_vanilla": mean_std(true_minus_vanilla),
+        "true_minus_standard": mean_std(true_minus_standard),
+        "true_minus_hensel_only": mean_std(true_minus_hensel_only),
         "true_minus_shuffled": mean_std(true_minus_shuffled),
         "true_minus_random": mean_std(true_minus_random),
         "true_minus_best_control": mean_std(true_minus_best_control),
-        "wins_vs_vanilla": sum(g > 0 for g in true_minus_vanilla),
+        "signed_alpha_minus_hensel_only": mean_std(signed_alpha_minus_hensel_only),
+        "wins_vs_standard": sum(g > 0 for g in true_minus_standard),
+        "wins_vs_hensel_only": sum(g > 0 for g in true_minus_hensel_only),
         "wins_vs_best_control": sum(g > 0 for g in true_minus_best_control),
         "num_seeds": len(runs),
     }
@@ -189,18 +198,23 @@ def summarize(runs: list[dict[str, Any]]) -> dict[str, Any]:
     corrs = []
     hierarchy_gaps = []
     for run in runs:
-        true_metrics = run["report"]["models"]["padic_attention_true"]
-        if "padic_gate" in true_metrics:
-            gates.append(float(true_metrics["padic_gate"]))
+        true_metrics = run["report"]["models"]["hensel_padic_sigmoid_true"]
+        if "padic_alpha" in true_metrics:
+            gates.append(float(true_metrics["padic_alpha"]))
+        if "padic_alpha_grad_norm" in true_metrics:
+            summary["attention"].setdefault("padic_alpha_grad_norm_values", []).append(
+                float(true_metrics["padic_alpha_grad_norm"])
+            )
         if "padic_attention_corr" in true_metrics:
             corrs.append(float(true_metrics["padic_attention_corr"]))
         if "hierarchy_gap" in true_metrics:
             hierarchy_gaps.append(float(true_metrics["hierarchy_gap"]))
 
     summary["attention"] = {
-        "padic_gate": mean_std(gates),
+        "padic_alpha": mean_std(gates),
         "padic_attention_corr": mean_std(corrs),
         "hierarchy_gap": mean_std(hierarchy_gaps),
+        "padic_alpha_grad_norm": mean_std(summary["attention"].pop("padic_alpha_grad_norm_values", [])),
     }
     return summary
 
@@ -215,24 +229,24 @@ def write_markdown(path: Path, runs: list[dict[str, Any]], summary: dict[str, An
         "",
         "## Per-seed AUROC",
         "",
-        "| Seed | Logistic | IsolationForest | Vanilla | True 2-adic | Shuffled | Random | True - Vanilla | True - Best Control |",
+        "| Seed | Standard | Hensel-only | Old gate | Signed alpha | Shuffled | Random | Old-Hensel | Old-Best Control |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
 
     for run in runs:
         seed = run["seed"]
         models = run["report"]["models"]
-        logistic = models["logistic_regression"]["auroc"]
-        iso = models["isolation_forest"]["auroc"]
-        vanilla = models["vanilla_transformer"]["auroc"]
-        true = models["padic_attention_true"]["auroc"]
-        shuffled = models["padic_attention_shuffled"]["auroc"]
-        random = models["padic_attention_random"]["auroc"]
+        standard = models["standard_transformer"]["auroc"]
+        hensel_only = models["hensel_only"]["auroc"]
+        true = models["hensel_padic_sigmoid_true"]["auroc"]
+        signed_alpha = models["hensel_padic_signed_alpha_true"]["auroc"]
+        shuffled = models["hensel_padic_sigmoid_shuffled"]["auroc"]
+        random = models["hensel_padic_sigmoid_random"]["auroc"]
         best_control = max(shuffled, random)
         lines.append(
-            f"| {seed} | {logistic:.4f} | {iso:.4f} | {vanilla:.4f} | "
-            f"{true:.4f} | {shuffled:.4f} | {random:.4f} | "
-            f"{true - vanilla:.4f} | {true - best_control:.4f} |"
+            f"| {seed} | {standard:.4f} | {hensel_only:.4f} | {true:.4f} | "
+            f"{signed_alpha:.4f} | {shuffled:.4f} | {random:.4f} | "
+            f"{true - hensel_only:.4f} | {true - best_control:.4f} |"
         )
 
     lines.extend(
@@ -265,21 +279,25 @@ def write_markdown(path: Path, runs: list[dict[str, Any]], summary: dict[str, An
             "",
             "| Comparison | Mean ± std |",
             "|---|---:|",
-            f"| True 2-adic - vanilla | {fmt_stat(gaps['true_minus_vanilla'])} |",
+            f"| Old gate - standard | {fmt_stat(gaps['true_minus_standard'])} |",
+            f"| Old gate - hensel-only | {fmt_stat(gaps['true_minus_hensel_only'])} |",
             f"| True 2-adic - shuffled | {fmt_stat(gaps['true_minus_shuffled'])} |",
             f"| True 2-adic - random | {fmt_stat(gaps['true_minus_random'])} |",
             f"| True 2-adic - best control | {fmt_stat(gaps['true_minus_best_control'])} |",
+            f"| Signed alpha - hensel-only | {fmt_stat(gaps['signed_alpha_minus_hensel_only'])} |",
             "",
             "## Win counts",
             "",
-            f"- True 2-adic beats vanilla in `{gaps['wins_vs_vanilla']}/{gaps['num_seeds']}` seeds.",
+            f"- Old gate beats standard in `{gaps['wins_vs_standard']}/{gaps['num_seeds']}` seeds.",
+            f"- Old gate beats hensel-only in `{gaps['wins_vs_hensel_only']}/{gaps['num_seeds']}` seeds.",
             f"- True 2-adic beats best hierarchy control in `{gaps['wins_vs_best_control']}/{gaps['num_seeds']}` seeds.",
             "",
             "## Attention diagnostics",
             "",
             "| Metric | Mean ± std |",
             "|---|---:|",
-            f"| p-adic gate | {fmt_stat(attention['padic_gate'])} |",
+            f"| p-adic alpha | {fmt_stat(attention['padic_alpha'])} |",
+            f"| p-adic alpha grad norm | {fmt_stat(attention['padic_alpha_grad_norm'])} |",
             f"| p-adic attention corr | {fmt_stat(attention['padic_attention_corr'])} |",
             f"| hierarchy gap | {fmt_stat(attention['hierarchy_gap'])} |",
         ]

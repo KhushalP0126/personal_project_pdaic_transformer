@@ -130,17 +130,30 @@ def _accumulation_scale(step: int, total_steps: int, grad_accum: int) -> int:
 def _collect_padic_gate_stats(model: nn.Module) -> dict[str, object]:
     gates = []
     for name, module in model.named_modules():
-        if hasattr(module, "_current_gate") and hasattr(module, "padic_gate"):
-            gate_tensor = module._current_gate(torch.float32, module.padic_gate.device)
+        if hasattr(module, "_current_alpha") and hasattr(module, "raw_padic_alpha"):
+            gate_tensor = module._current_alpha(torch.float32, module.raw_padic_alpha.device)
             raw_value = None
-            if getattr(module, "fixed_padic_gate", None) is None:
-                raw_value = float(module.padic_gate.detach().cpu().item())
+            if getattr(module, "padic_bias_mode", "sigmoid") != "none" and (
+                getattr(module, "fixed_padic_gate", None) is None
+                and getattr(module, "fixed_padic_alpha", None) is None
+            ):
+                raw_value = float(module.raw_padic_alpha.detach().cpu().item())
             gates.append(
                 {
                     "name": name,
                     "raw": raw_value,
                     "sigmoid": float(gate_tensor.detach().cpu().item()),
-                    "mode": "fixed" if getattr(module, "fixed_padic_gate", None) is not None else "learned",
+                    "mode": (
+                        "off"
+                        if getattr(module, "padic_bias_mode", "sigmoid") == "none"
+                        else (
+                            "fixed"
+                            if getattr(module, "fixed_padic_gate", None) is not None
+                            or getattr(module, "fixed_padic_alpha", None) is not None
+                            else "learned"
+                        )
+                    ),
+                    "bias_mode": getattr(module, "padic_bias_mode", "sigmoid"),
                 }
             )
 
@@ -180,7 +193,10 @@ class TrainConfig:
     temperature_decay: float = 0.0
     gate_init_logit: float = 0.0
     gate_regularization_weight: float = 0.001
+    padic_bias_mode: str = "sigmoid"
+    padic_alpha_max: float = 1.0
     fixed_padic_gate: float | None = None
+    fixed_padic_alpha: float | None = None
     dropout: float = 0.1
 
     window_size: int = 32
@@ -252,6 +268,8 @@ def _train_epoch(
         raise ValueError("grad_accum must be >= 1")
     model.train()
     total_loss = total_bce = total_ctr = 0.0
+    alpha_grad_norm_sum = 0.0
+    alpha_grad_norm_count = 0
     n_batches = 0
     optimizer.zero_grad()
     total_steps = len(loader)
@@ -276,6 +294,15 @@ def _train_epoch(
         if (step + 1) % grad_accum == 0 or is_last:
             if scaler is not None:
                 scaler.unscale_(optimizer)
+            alpha_sq_sum = 0.0
+            has_alpha_grad = False
+            for name, param in model.named_parameters():
+                if name.endswith("raw_padic_alpha") and param.grad is not None:
+                    alpha_sq_sum += float(param.grad.detach().pow(2).sum().item())
+                    has_alpha_grad = True
+            if has_alpha_grad:
+                alpha_grad_norm_sum += math.sqrt(alpha_sq_sum)
+                alpha_grad_norm_count += 1
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
             if scaler is not None:
                 scaler.step(optimizer)
@@ -293,6 +320,7 @@ def _train_epoch(
         "loss": total_loss / max(1, n_batches),
         "bce": total_bce / max(1, n_batches),
         "contrastive": total_ctr / max(1, n_batches),
+        "padic_alpha_grad_norm": alpha_grad_norm_sum / max(1, alpha_grad_norm_count),
     }
 
 
@@ -421,7 +449,7 @@ def _make_optimizer(
             continue
         if (
             ".valuation." in name
-            or name.endswith("padic_gate")
+            or name.endswith("raw_padic_alpha")
             or name.endswith("logit_scale")
         ):
             padic_params.append(param)

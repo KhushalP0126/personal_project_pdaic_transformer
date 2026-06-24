@@ -32,6 +32,7 @@ CPU_ONE_EPOCH_TRAIN_ARGS ?= --device cpu --p 3 --r 8 --d-model 32 --n-heads 4 --
 CPU_ONE_EPOCH_BASELINE_ARGS ?= --device cpu --hierarchy-rule-dataset --p 3 --r 8 --samples 512 --classes 8 --tokens-per-class 32 --window-size 16 --attack-fraction 0.30 --rule-subtree-depth 2 --rule-stay-steps 4 --rule-attack-tokens 1 --train-samples 256 --val-samples 64 --epochs 1 --batch-size 32 --lr 2e-4 --d-model 32 --n-heads 4 --n-layers 1 --d-digit 8 --output-json results/cpu_1epoch_baselines.json
 IP_CPU_ARGS ?= --device cpu --train-samples 512 --val-samples 128 --window-size 16 --prefix-len 24 --num-prefixes 16 --attack-fraction 0.30 --attack-min-len 1 --attack-max-len 4 --epochs 1 --batch-size 128 --lr 3e-4 --d-model 64 --n-heads 4 --n-layers 1 --d-digit 8 --output-json results/ip_synthetic.json --output-md results/ip_synthetic.md
 IP_TRANSITION_CPU_ARGS ?= --device cpu --train-samples 2048 --val-samples 512 --window-size 16 --prefix-len 24 --num-prefixes 32 --num-groups 4 --attack-fraction 0.30 --epochs 3 --batch-size 256 --lr 3e-4 --d-model 64 --n-heads 4 --n-layers 1 --d-digit 8 --dropout 0.1 --output-json results/ip_transition_synthetic.json --output-md results/ip_transition_synthetic.md
+IP_STUDY_CPU_ARGS ?= --device cpu --train-samples 2048 --val-samples 512 --window-size 16 --prefix-len 24 --num-prefixes 32 --num-groups 4 --attack-fraction 0.30 --attack-min-len 1 --attack-max-len 4 --epochs 3 --batch-size 256 --lr 3e-4 --d-model 64 --n-heads 4 --n-layers 1 --d-digit 8 --dropout 0.1 --output-json results/final_summary.json --output-md results/final_summary.md
 IP_DAY4_ARGS ?= --device cpu --train-samples 2048 --val-samples 512 --prefix-len 24 --num-prefixes 32 --attack-fraction 0.30 --attack-min-len 1 --attack-max-len 4 --batch-size 256 --lr 3e-4 --d-digit 8 --output-json results/ip_day4_tuning.json --output-md results/ip_day4_tuning.md
 IP_DAY5_ARGS ?= --device cpu --seeds 20260504 20260505 20260506 --train-samples 2048 --val-samples 512 --window-size 16 --prefix-len 24 --num-prefixes 32 --attack-fraction 0.30 --attack-min-len 1 --attack-max-len 4 --epochs 3 --batch-size 256 --lr 3e-4 --d-model 64 --n-heads 4 --n-layers 1 --d-digit 8 --dropout 0.1 --output-json results/ip_day5_multiseed.json --output-md results/ip_day5_multiseed.md
 IP_DAY5_FAST_ARGS ?= --device cpu --seeds 20260504 20260505 20260506 --train-samples 1024 --val-samples 256 --window-size 16 --prefix-len 24 --num-prefixes 32 --attack-fraction 0.30 --attack-min-len 1 --attack-max-len 4 --epochs 3 --batch-size 256 --lr 3e-4 --d-model 64 --n-heads 4 --n-layers 1 --d-digit 8 --dropout 0.1 --output-json results/ip_day5_multiseed.json --output-md results/ip_day5_multiseed.md
@@ -51,7 +52,7 @@ INT8_ARGS ?= --r 8
 .PHONY: all setup test cpu gpu \
         int8 hardware \
         smoke train vanilla hierarchy realistic primes pdaic-primes compare-analysis sweep baselines eval threshold diagnose ablate \
-        beth audit cpu-all-1epoch ip-cpu ip-transition-cpu ip-day4 ip-day5 ip-day5-fast \
+        beth audit cpu-all-1epoch ip-cpu ip-transition-cpu ip-study-cpu ip-day4 ip-day5 ip-day5-fast \
         ablate-no-contrastive ablate-small-model ablate-r8 ablate-p3 ablate-p5 ablate-p7 \
         clean help clean-results clean-caches clean-checkpoints
 
@@ -102,6 +103,9 @@ ip-cpu: setup
 
 ip-transition-cpu: setup
 	$(VENV_PYTHON) scripts/run_ip_transition_experiment.py $(IP_TRANSITION_CPU_ARGS)
+
+ip-study-cpu: setup
+	$(VENV_PYTHON) scripts/run_ip_characterization_study.py $(IP_STUDY_CPU_ARGS)
 
 ip-day4: setup
 	$(VENV_PYTHON) scripts/tune_ip_day4.py $(IP_DAY4_ARGS)
@@ -231,6 +235,7 @@ help:
 	@echo "  make cpu-all-1epoch    Run one CPU epoch across vanilla, PDAIC, hierarchy, realistic, and baselines"
 	@echo "  make ip-cpu            Run the CPU IP-prefix synthetic experiment"
 	@echo "  make ip-transition-cpu Run the harder CPU IP transition experiment"
+	@echo "  make ip-study-cpu      Run the four-variant CPU characterization study"
 	@echo "  make ip-day4           Run the small CPU IP-prefix tuning pass"
 	@echo "  make ip-day5           Run the Day 5 multi-seed IP-prefix validation"
 	@echo "  make ip-day5-fast      Run the smaller Day 5 multi-seed smoke validation"

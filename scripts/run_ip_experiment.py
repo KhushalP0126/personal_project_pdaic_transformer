@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -19,7 +20,10 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from padic_transformer.baselines_and_validation import run_logistic_regression_baseline
+from padic_transformer.baselines_and_validation import (
+    run_logistic_regression_baseline,
+    run_standard_transformer_baseline,
+)
 from padic_transformer.dataset_ip import IPPrefixAnomalyDataset, IPPrefixDatasetConfig
 from padic_transformer.metrics import binary_auroc
 from padic_transformer.model import PadicAnomalyDetector
@@ -33,10 +37,12 @@ R = 32
 MODEL_ORDER = (
     "logistic_regression",
     "isolation_forest",
-    "vanilla_transformer",
-    "padic_attention_true",
-    "padic_attention_shuffled",
-    "padic_attention_random",
+    "standard_transformer",
+    "hensel_only",
+    "hensel_padic_sigmoid_true",
+    "hensel_padic_sigmoid_shuffled",
+    "hensel_padic_sigmoid_random",
+    "hensel_padic_signed_alpha_true",
 )
 
 
@@ -62,7 +68,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--gate-init-logit", type=float, default=0.0)
     parser.add_argument("--gate-regularization-weight", type=float, default=0.001)
+    parser.add_argument("--padic-bias-mode", choices=["none", "sigmoid", "signed_alpha"], default="sigmoid")
+    parser.add_argument("--padic-alpha-max", type=float, default=1.0)
     parser.add_argument("--fixed-padic-gate", type=float, default=None)
+    parser.add_argument("--fixed-padic-alpha", type=float, default=None)
     parser.add_argument("--output-json", default="results/ip_synthetic.json")
     parser.add_argument("--output-md", default="results/ip_synthetic.md")
     return parser.parse_args()
@@ -265,18 +274,30 @@ def train_digit_model(
         model.train()
         total_loss = 0.0
         batches = 0
+        alpha_grad_norm_sum = 0.0
+        alpha_grad_norm_count = 0
         for windows, labels in train_loader:
             windows = windows.to(device)
             labels = labels.to(device)
             logits = model(windows)
             loss = criterion(logits, labels)
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            alpha_sq_sum = 0.0
+            has_alpha_grad = False
+            for name, param in model.named_parameters():
+                if name.endswith("raw_padic_alpha") and param.grad is not None:
+                    alpha_sq_sum += float(param.grad.detach().pow(2).sum().item())
+                    has_alpha_grad = True
+            if has_alpha_grad:
+                alpha_grad_norm_sum += math.sqrt(alpha_sq_sum)
+                alpha_grad_norm_count += 1
             optimizer.step()
             total_loss += float(loss.detach().cpu().item())
             batches += 1
 
         val_metrics, attention_metrics = _eval_model(model, val_loader, device)
+        val_metrics["padic_alpha_grad_norm"] = alpha_grad_norm_sum / max(1, alpha_grad_norm_count)
         if best is None or val_metrics["auroc"] >= best["auroc"]:
             best = {**val_metrics, **attention_metrics}
         print(
@@ -316,7 +337,7 @@ def make_datasets(args: argparse.Namespace) -> tuple[IPPrefixAnomalyDataset, IPP
     )
 
 
-def run_vanilla(args: argparse.Namespace, train_ds, val_ds, pos_weight: float, device: torch.device) -> dict[str, float]:
+def run_hensel_only(args: argparse.Namespace, train_ds, val_ds, pos_weight: float, device: torch.device) -> dict[str, float]:
     model = PadicAnomalyDetector(
         p=P,
         r=R,
@@ -342,6 +363,24 @@ def run_vanilla(args: argparse.Namespace, train_ds, val_ds, pos_weight: float, d
     )
 
 
+def run_standard(args: argparse.Namespace, train_ds, val_ds, pos_weight: float, device: torch.device) -> dict[str, float]:
+    return run_standard_transformer_baseline(
+        train_ds.windows,
+        train_ds.labels,
+        val_ds.windows,
+        val_ds.labels,
+        p=P,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        pos_weight=pos_weight,
+        device=device,
+    )
+
+
 def run_padic_variant(
     variant: str,
     args: argparse.Namespace,
@@ -349,6 +388,8 @@ def run_padic_variant(
     val_ds,
     pos_weight: float,
     device: torch.device,
+    *,
+    padic_bias_mode: str,
 ) -> dict[str, float]:
     train_windows = apply_ip_hierarchy_variant(train_ds.windows, variant, args.seed)
     val_windows = apply_ip_hierarchy_variant(val_ds.windows, variant, args.seed)
@@ -365,7 +406,10 @@ def run_padic_variant(
         max_seq_len=args.window_size,
         gate_init_logit=args.gate_init_logit,
         gate_regularization_weight=args.gate_regularization_weight,
+        padic_bias_mode=padic_bias_mode,
+        padic_alpha_max=args.padic_alpha_max,
         fixed_padic_gate=args.fixed_padic_gate,
+        fixed_padic_alpha=args.fixed_padic_alpha,
     ).to(device)
     result = train_digit_model(
         model,
@@ -380,6 +424,7 @@ def run_padic_variant(
         device=device,
     )
     result["hierarchy_variant"] = variant
+    result["padic_bias_mode"] = padic_bias_mode
     return result
 
 
@@ -421,8 +466,8 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         "",
         "## Results",
         "",
-        "| Model | AUROC | F1 | Precision | Recall | p-adic corr | hierarchy gap | gate | seconds |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Model | AUROC | F1 | Precision | Recall | p-adic corr | hierarchy gap | alpha | alpha grad | seconds |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name in MODEL_ORDER:
         metrics = report["models"].get(name, {})
@@ -431,7 +476,8 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             f"{fmt(metrics, 'precision')} | {fmt(metrics, 'recall')} | "
             f"{fmt(metrics, 'padic_attention_corr')} | "
             f"{fmt(metrics, 'hierarchy_gap')} | "
-            f"{fmt(metrics, 'padic_gate')} | "
+            f"{fmt(metrics, 'padic_alpha')} | "
+            f"{fmt(metrics, 'padic_alpha_grad_norm')} | "
             f"{fmt_seconds(metrics)} |"
         )
     lines.extend(
@@ -439,9 +485,9 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             "",
             "## Notes",
             "",
-            "- `padic_attention_true` keeps MSB-first IP prefix bits.",
-            "- `padic_attention_shuffled` randomly permutes the unique IP-token vocabulary.",
-            "- `padic_attention_random` remaps each unique IP token to random 32-bit digits.",
+            "- `hensel_only` keeps Hensel embedding and removes explicit p-adic attention bias.",
+            "- `hensel_padic_sigmoid_*` uses the old non-negative sigmoid bias.",
+            "- `hensel_padic_signed_alpha_true` uses signed alpha on the true hierarchy.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -499,29 +545,41 @@ def main() -> None:
             contamination=args.attack_fraction,
         ),
     )
-    models["vanilla_transformer"] = run_step(
-        "vanilla_transformer",
+    models["standard_transformer"] = run_step(
+        "standard_transformer",
         3,
         total,
-        lambda: run_vanilla(args, train_ds, val_ds, pos_weight, device),
+        lambda: run_standard(args, train_ds, val_ds, pos_weight, device),
     )
-    models["padic_attention_true"] = run_step(
-        "padic_attention_true",
+    models["hensel_only"] = run_step(
+        "hensel_only",
         4,
         total,
-        lambda: run_padic_variant("true", args, train_ds, val_ds, pos_weight, device),
+        lambda: run_hensel_only(args, train_ds, val_ds, pos_weight, device),
     )
-    models["padic_attention_shuffled"] = run_step(
-        "padic_attention_shuffled",
+    models["hensel_padic_sigmoid_true"] = run_step(
+        "hensel_padic_sigmoid_true",
         5,
         total,
-        lambda: run_padic_variant("shuffled", args, train_ds, val_ds, pos_weight, device),
+        lambda: run_padic_variant("true", args, train_ds, val_ds, pos_weight, device, padic_bias_mode="sigmoid"),
     )
-    models["padic_attention_random"] = run_step(
-        "padic_attention_random",
+    models["hensel_padic_sigmoid_shuffled"] = run_step(
+        "hensel_padic_sigmoid_shuffled",
         6,
         total,
-        lambda: run_padic_variant("random", args, train_ds, val_ds, pos_weight, device),
+        lambda: run_padic_variant("shuffled", args, train_ds, val_ds, pos_weight, device, padic_bias_mode="sigmoid"),
+    )
+    models["hensel_padic_sigmoid_random"] = run_step(
+        "hensel_padic_sigmoid_random",
+        7,
+        total,
+        lambda: run_padic_variant("random", args, train_ds, val_ds, pos_weight, device, padic_bias_mode="sigmoid"),
+    )
+    models["hensel_padic_signed_alpha_true"] = run_step(
+        "hensel_padic_signed_alpha_true",
+        8,
+        total,
+        lambda: run_padic_variant("true", args, train_ds, val_ds, pos_weight, device, padic_bias_mode="signed_alpha"),
     )
 
     report = {
@@ -541,6 +599,8 @@ def main() -> None:
             "n_heads": args.n_heads,
             "n_layers": args.n_layers,
             "d_digit": args.d_digit,
+            "padic_bias_mode": args.padic_bias_mode,
+            "padic_alpha_max": args.padic_alpha_max,
         },
         "data_split": {
             "train_seed": args.seed,

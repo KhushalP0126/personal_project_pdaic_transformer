@@ -1,6 +1,6 @@
 # Personal Project: p-adic Transformer
 
-This repo builds a p-adic anomaly detection pipeline around Hensel-coded token sequences, a transformer encoder, and a binary anomaly head. The current attention model is hybrid: learned content attention plus a gated p-adic hierarchy bias.
+This repo builds a p-adic anomaly detection pipeline around Hensel-coded token sequences, a transformer encoder, and a binary anomaly head. The current paper-facing direction is a controlled study that separates Hensel embedding from explicit p-adic attention bias.
 
 ## Quick Explainer
 
@@ -34,7 +34,7 @@ Primary command: make ip-cpu
 The project is now using the older Hensel/syscall-style synthetic work as supporting infrastructure, not as the main paper target. The active claim is modest:
 
 ```text
-2-adic attention is a useful inductive bias for IP-prefix anomaly detection.
+2-adic structure can help on hierarchy-aligned IP tasks, but the gain depends on whether it enters as coordinates, as explicit attention bias, or both.
 ```
 
 The codebase is in a usable experimental state for the IP-prefix direction, but it is still not publication-ready.
@@ -74,7 +74,43 @@ The fast CPU smoke path is:
 make smoke
 ```
 
-### Reproduce the IP-prefix results
+### Reproduce the current characterization study
+
+The main CPU study command is:
+
+```bash
+make ip-study-cpu
+```
+
+Direct runner:
+
+```bash
+.venv/bin/python scripts/run_ip_characterization_study.py --device cpu
+```
+
+This writes:
+
+```text
+results/final_summary.json
+results/final_summary.md
+```
+
+The controlled study compares:
+
+- `standard_transformer`
+- `hensel_only`
+- `hensel_padic_sigmoid`
+- `hensel_padic_signed_alpha`
+
+across:
+
+- simple synthetic IP-prefix anomalies
+- harder transition-rule IP anomalies
+- simple->transition transfer
+- transition->simple transfer
+- realistic idle-heavy proxy data
+
+### Reproduce the earlier IP-prefix results
 
 Day 3 first useful IP-prefix run:
 
@@ -132,7 +168,7 @@ results/ip_day5_multiseed.json
 results/ip_day5_multiseed.md
 ```
 
-### Gate ablation
+### Old gate ablation
 
 The IP experiment runner now exposes fixed and learned gate variants directly:
 

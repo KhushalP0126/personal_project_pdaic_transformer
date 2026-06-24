@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 
@@ -444,13 +445,24 @@ def _train_digit_window_model(
 
     for _ in range(epochs):
         model.train()
+        alpha_grad_norm_sum = 0.0
+        alpha_grad_norm_count = 0
         for windows_batch, labels_batch in train_loader:
             windows_batch = windows_batch.to(device)
             labels_batch = labels_batch.to(device)
             logits, _ = model.forward_with_features(windows_batch)
             loss = criterion(logits, labels_batch)
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            alpha_sq_sum = 0.0
+            has_alpha_grad = False
+            for name, param in model.named_parameters():
+                if name.endswith("raw_padic_alpha") and param.grad is not None:
+                    alpha_sq_sum += float(param.grad.detach().pow(2).sum().item())
+                    has_alpha_grad = True
+            if has_alpha_grad:
+                alpha_grad_norm_sum += math.sqrt(alpha_sq_sum)
+                alpha_grad_norm_count += 1
             optimizer.step()
 
         model.eval()
@@ -472,7 +484,11 @@ def _train_digit_window_model(
         auroc = binary_auroc(logits_cat, labels_cat)
         f1 = _scores_to_f1(logits_cat, labels_cat, threshold=0.0)
         if auroc > best["auroc"]:
-            best = {"auroc": auroc, "f1": f1}
+            best = {
+                "auroc": auroc,
+                "f1": f1,
+                "padic_alpha_grad_norm": alpha_grad_norm_sum / max(1, alpha_grad_norm_count),
+            }
             if metric_count > 0:
                 for key, value in metric_sums.items():
                     best[key] = value / metric_count
@@ -539,6 +555,10 @@ def run_padic_attention_baseline(
     n_heads: int = 8,
     n_layers: int = 4,
     d_digit: int = 16,
+    padic_bias_mode: str = "sigmoid",
+    padic_alpha_max: float = 1.0,
+    fixed_padic_gate: float | None = None,
+    fixed_padic_alpha: float | None = None,
     epochs: int = 10,
     batch_size: int = 256,
     lr: float = 3e-4,
@@ -560,6 +580,10 @@ def run_padic_attention_baseline(
         ffn_dim=d_model * 4,
         head_hidden=d_model // 2,
         d_digit=d_digit,
+        padic_bias_mode=padic_bias_mode,
+        padic_alpha_max=padic_alpha_max,
+        fixed_padic_gate=fixed_padic_gate,
+        fixed_padic_alpha=fixed_padic_alpha,
     ).to(device)
     result = _train_digit_window_model(
         model,
@@ -574,6 +598,7 @@ def run_padic_attention_baseline(
         device=device,
     )
     result["hierarchy_variant"] = hierarchy_variant
+    result["padic_bias_mode"] = padic_bias_mode
     return result
 
 

@@ -452,6 +452,10 @@ class TestTrainingSmoke(unittest.TestCase):
         self.assertIn("twin_prime_stress_padic_attention_corr", metrics)
         self.assertIn("twin_prime_stress_hierarchy_gap", metrics)
         self.assertIn("padic_gate", metrics)
+        self.assertIn("padic_alpha", metrics)
+        self.assertIn("raw_padic_alpha", metrics)
+        self.assertIn("content_logit_std", metrics)
+        self.assertIn("padic_logit_std", metrics)
 
     def test_val_epoch_skips_nan_attention_metrics(self) -> None:
         from padic_transformer.training import _val_epoch
@@ -463,6 +467,7 @@ class TestTrainingSmoke(unittest.TestCase):
                 metrics = {
                     "hierarchy_gap": torch.tensor(float("nan")),
                     "padic_gate": torch.tensor(float("nan")),
+                    "padic_alpha": torch.tensor(float("nan")),
                 }
                 return logits, features, [], metrics
 
@@ -478,6 +483,7 @@ class TestTrainingSmoke(unittest.TestCase):
         metrics = _val_epoch(model, loader, loss_fn, torch.device("cpu"))
         self.assertTrue(torch.isfinite(torch.tensor(metrics["hierarchy_gap"])).item())
         self.assertTrue(torch.isfinite(torch.tensor(metrics["padic_gate"])).item())
+        self.assertTrue(torch.isfinite(torch.tensor(metrics["padic_alpha"])).item())
 
     def test_collect_padic_gate_stats_reports_fixed_gate_value(self) -> None:
         from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
@@ -500,6 +506,32 @@ class TestTrainingSmoke(unittest.TestCase):
         self.assertAlmostEqual(stats["gate_mean"], 0.25, places=6)
         for gate in stats["gates"]:
             self.assertEqual(gate["mode"], "fixed")
+            self.assertIsNone(gate["raw"])
+            self.assertEqual(gate["bias_mode"], "sigmoid")
+
+    def test_collect_padic_gate_stats_reports_signed_alpha_value(self) -> None:
+        from padic_transformer.padic_attention import PadicAttentionAnomalyDetector
+        from padic_transformer.training import _collect_padic_gate_stats
+
+        model = PadicAttentionAnomalyDetector(
+            p=3,
+            r=8,
+            d_model=32,
+            n_heads=2,
+            n_layers=1,
+            ffn_dim=64,
+            head_hidden=16,
+            d_digit=8,
+            padic_bias_mode="signed_alpha",
+            fixed_padic_alpha=-0.5,
+        )
+        stats = _collect_padic_gate_stats(model)
+        self.assertTrue(stats["has_padic_gates"])
+        self.assertEqual(stats["gate_count"], 2)
+        self.assertAlmostEqual(stats["gate_mean"], -0.5, places=6)
+        for gate in stats["gates"]:
+            self.assertEqual(gate["mode"], "fixed")
+            self.assertEqual(gate["bias_mode"], "signed_alpha")
             self.assertIsNone(gate["raw"])
 
     def test_synthetic_pos_weight_override_is_respected(self) -> None:
