@@ -41,6 +41,7 @@ Outputs:
 ```text
 results/final_summary.json
 results/final_summary.md
+results/final_summary_by_seed.md
 ```
 
 ## What the study runs
@@ -60,6 +61,24 @@ Tasks:
 - cross-generator simple->transition
 - cross-generator transition->simple
 - realistic idle-heavy proxy
+
+## Hardware and runtime note
+
+All final study numbers were run on CPU with:
+
+- seeds: `20260504`, `20260505`, `20260506`
+- epochs: `3`
+- `d_model=64`
+- `n_layers=1`
+- `n_heads=4`
+- `train_samples=2048`
+- `val_samples=512`
+
+The realistic proxy uses the same train/validation counts with:
+
+- `realistic_window_size=32`
+- `realistic_attack_fraction=0.05`
+- `realistic_idle_fraction=0.70`
 
 ## Current result snapshot
 

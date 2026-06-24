@@ -909,11 +909,39 @@ def write_markdown(path: Path, payload: dict[str, Any]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_by_seed_markdown(path: Path, payload: dict[str, Any]) -> None:
+    lines = [
+        "# Final Summary By Seed",
+        "",
+        "| Seed | Task | Standard | Flat digit | Hensel-only | Old gate | Signed alpha | Best model |",
+        "|---:|---|---:|---:|---:|---:|---:|---|",
+    ]
+    for run in payload["runs"]:
+        seed = run["seed"]
+        for key, label in EXPERIMENT_ORDER:
+            models = run["experiments"][key]["models"]
+            best_model = run["experiments"][key]["best_model"]
+            lines.append(
+                f"| {seed} | {label} | "
+                f"{models['standard_transformer']['auroc']:.4f} | "
+                f"{models['flat_digit_transformer']['auroc']:.4f} | "
+                f"{models['hensel_only']['auroc']:.4f} | "
+                f"{models['hensel_padic_sigmoid']['auroc']:.4f} | "
+                f"{models['hensel_padic_signed_alpha']['auroc']:.4f} | "
+                f"{best_model} |"
+            )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     args = parse_args()
     device = resolve_device(args.device)
     output_json = safe_results_path(REPO_ROOT, args.output_json)
     output_md = safe_results_path(REPO_ROOT, args.output_md)
+    by_seed_md = safe_results_path(
+        REPO_ROOT,
+        str(Path(args.output_md).with_name(Path(args.output_md).stem + "_by_seed.md")),
+    )
 
     runs: list[dict[str, Any]] = []
     for seed in args.seeds:
@@ -945,8 +973,10 @@ def main() -> None:
 
     output_json.write_text(json.dumps(json_ready(payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     write_markdown(output_md, payload)
+    write_by_seed_markdown(by_seed_md, payload)
     print(f"\nWrote {output_json.relative_to(REPO_ROOT)}")
     print(f"Wrote {output_md.relative_to(REPO_ROOT)}")
+    print(f"Wrote {by_seed_md.relative_to(REPO_ROOT)}")
 
 
 if __name__ == "__main__":

@@ -140,6 +140,34 @@ across:
 
 The raw-token `standard_transformer` is intentionally strict: it builds a token vocabulary from the training split and sends unseen validation addresses to one OOV token. That baseline tests raw-token generalization without digit sharing. It is part of the inductive-bias question, not a claim that standard Transformers fail in general.
 
+### CPU study budget
+
+All final study numbers in `results/final_summary.*` were run on CPU with:
+
+- 3 seeds: `20260504`, `20260505`, `20260506`
+- 3 epochs
+- `d_model=64`
+- `n_layers=1`
+- `n_heads=4`
+- `train_samples=2048`
+- `val_samples=512`
+
+### Claim boundary
+
+Supported:
+
+- structured digit or prefix features help on the simple aligned synthetic IP task
+- signed alpha is safer than the old positive-only gate
+- explicit p-adic attention bias is fragile
+- transfer remains weak
+
+Not supported:
+
+- p-adic attention is the main mechanism
+- p-adic Transformers beat standard Transformers generally
+- the method generalizes to real traffic
+- routing efficiency improvement
+
 ### Reproduce the earlier IP-prefix results
 
 Day 3 first useful IP-prefix run:
